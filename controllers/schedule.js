@@ -9,17 +9,27 @@ const {
 // Get jadwal mingguan
 const getJadwalMingguan = async (req, res) => {
   try {
-    const [jadwal] = await pool.query(
+    const result = await pool.query(
       `SELECT j.schedule_id, j.hari, t.task_id, t.deskripsi, t.jam_mulai, t.jam_selesai 
        FROM jadwal j 
        LEFT JOIN task t ON j.schedule_id = t.schedule_id 
-       WHERE j.user_id = ? 
-       ORDER BY FIELD(j.hari, 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'), t.jam_mulai`,
+       WHERE j.user_id = $1 
+       ORDER BY 
+         CASE j.hari 
+           WHEN 'Senin' THEN 1 
+           WHEN 'Selasa' THEN 2 
+           WHEN 'Rabu' THEN 3 
+           WHEN 'Kamis' THEN 4 
+           WHEN 'Jumat' THEN 5 
+           WHEN 'Sabtu' THEN 6 
+           WHEN 'Minggu' THEN 7 
+         END,
+         t.jam_mulai`,
       [req.user.id]
     );
 
-    // Reformat data menjadi struktur yang lebih mudah dibaca
-    const formattedSchedule = jadwal.reduce((acc, curr) => {
+    // Format data
+    const formattedSchedule = result.rows.reduce((acc, curr) => {
       if (!acc[curr.hari]) {
         acc[curr.hari] = [];
       }
@@ -48,22 +58,23 @@ const getJadwalMingguan = async (req, res) => {
 
 // Delete jadwal mingguan setiap hari Minggu
 const deleteWeeklySchedule = async () => {
-  const connection = await pool.getConnection();
+  const client = await pool.connect();
   try {
-    await connection.beginTransaction();
-
-    // Hapus semua jadwal dan task
-    await connection.query(
-      "DELETE j, t FROM jadwal j LEFT JOIN task t ON j.schedule_id = t.schedule_id"
+    await client.query("BEGIN");
+    await client.query(
+      `DELETE FROM task 
+       WHERE schedule_id IN (
+         SELECT schedule_id FROM jadwal
+       )`
     );
-
-    await connection.commit();
+    await client.query("DELETE FROM jadwal");
+    await client.query("COMMIT");
     console.log("Weekly schedule deleted successfully");
   } catch (error) {
-    await connection.rollback();
+    await client.query("ROLLBACK");
     console.error("Error deleting weekly schedule:", error);
   } finally {
-    connection.release();
+    client.release();
   }
 };
 

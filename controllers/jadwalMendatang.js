@@ -13,20 +13,51 @@ const validateTime = (jamMulai, jamSelesai) => {
 // Get jadwal mendatang (yang belum lewat)
 const getJadwalMendatang = async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      `SELECT * FROM jadwal_mendatang 
-       WHERE user_id = ? 
-       AND (tanggal > CURDATE() 
-            OR (tanggal = CURDATE() AND jam_selesai > TIME(NOW())))
+    const currentDate = new Date();
+    const currentTime = currentDate.toLocaleTimeString("id-ID", {
+      hour12: false,
+      timeZone: "Asia/Jakarta",
+    });
+    // console.log("Current DateTime:", currentDate.toISOString());
+    // console.log("Current Time (WIB):", currentTime);
+
+    const result = await pool.query(
+      `SELECT 
+        *,
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME as current_time,
+        (CURRENT_DATE AT TIME ZONE 'Asia/Jakarta')::DATE as current_date
+       FROM jadwal_mendatang 
+       WHERE user_id = $1 
+       AND (tanggal > (CURRENT_DATE AT TIME ZONE 'Asia/Jakarta')::DATE
+            OR (tanggal = (CURRENT_DATE AT TIME ZONE 'Asia/Jakarta')::DATE 
+                AND jam_selesai > (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME))
        ORDER BY tanggal, jam_mulai`,
       [req.user.id]
     );
 
+    // Log each schedule's comparison
+    // result.rows.forEach((row) => {
+    //   console.log("\nSchedule Comparison:");
+    //   console.log("Schedule ID:", row.id);
+    //   console.log("Tanggal:", row.tanggal);
+    //   console.log("Current Date:", row.current_date);
+    //   console.log("Jam Mulai:", row.jam_mulai);
+    //   console.log("Jam Selesai:", row.jam_selesai);
+    //   console.log("Current Time:", row.current_time);
+    //   console.log("Is Future Date:", row.tanggal > row.current_date);
+    //   console.log(
+    //     "Is Today:",
+    //     row.tanggal.toDateString() === new Date().toDateString()
+    //   );
+    //   console.log("Is Not Finished:", row.jam_selesai > row.current_time);
+    // });
+
     res.status(200).json({
       success: true,
-      data: rows,
+      data: result.rows,
     });
   } catch (error) {
+    console.error("Error in getJadwalMendatang:", error);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -80,8 +111,8 @@ const addJadwalMendatang = async (req, res) => {
       });
     }
 
-    const [result] = await pool.query(
-      "INSERT INTO jadwal_mendatang (user_id, tanggal, kegiatan, deskripsi, jam_mulai, jam_selesai) VALUES (?, ?, ?, ?, ?, ?)",
+    const result = await pool.query(
+      "INSERT INTO jadwal_mendatang (user_id, tanggal, kegiatan, deskripsi, jam_mulai, jam_selesai) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
       [
         req.user.id,
         tanggal,
@@ -95,15 +126,7 @@ const addJadwalMendatang = async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Jadwal mendatang berhasil ditambahkan",
-      data: {
-        id: result.insertId,
-        user_id: req.user.id,
-        tanggal,
-        kegiatan,
-        deskripsi,
-        jam_mulai,
-        jam_selesai,
-      },
+      data: result.rows[0],
     });
   } catch (error) {
     res.status(500).json({
@@ -133,8 +156,8 @@ const editJadwalMendatang = async (req, res) => {
       });
     }
 
-    const [result] = await pool.query(
-      "UPDATE jadwal_mendatang SET tanggal = ?, kegiatan = ?, deskripsi = ?, jam_mulai = ?, jam_selesai = ? WHERE id = ? AND user_id = ?",
+    const result = await pool.query(
+      "UPDATE jadwal_mendatang SET tanggal = $1, kegiatan = $2, deskripsi = $3, jam_mulai = $4, jam_selesai = $5 WHERE id = $6 AND user_id = $7 RETURNING *",
       [
         tanggal,
         kegiatan,
@@ -146,7 +169,7 @@ const editJadwalMendatang = async (req, res) => {
       ]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({
         success: false,
         message: "Jadwal mendatang tidak ditemukan",
@@ -156,15 +179,7 @@ const editJadwalMendatang = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Jadwal mendatang berhasil diupdate",
-      data: {
-        id,
-        user_id: req.user.id,
-        tanggal,
-        kegiatan,
-        deskripsi,
-        jam_mulai,
-        jam_selesai,
-      },
+      data: result.rows[0],
     });
   } catch (error) {
     res.status(500).json({
@@ -179,12 +194,12 @@ const deleteJadwalMendatang = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [result] = await pool.query(
-      "DELETE FROM jadwal_mendatang WHERE id = ? AND user_id = ?",
+    const result = await pool.query(
+      "DELETE FROM jadwal_mendatang WHERE id = $1 AND user_id = $2 RETURNING *",
       [id, req.user.id]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({
         success: false,
         message: "Jadwal mendatang tidak ditemukan",
@@ -206,25 +221,65 @@ const deleteJadwalMendatang = async (req, res) => {
 // Get jadwal mendatang history (yang sudah lewat)
 const getJadwalMendatangHistory = async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      `SELECT * FROM jadwal_mendatang 
-       WHERE user_id = ? 
-       AND (
-         tanggal < CURDATE() 
-         OR (
-           tanggal = CURDATE() 
-           AND TIME(NOW()) > jam_selesai
-         )
-       )
-       ORDER BY tanggal ASC, jam_mulai DESC`,
+    const currentDate = new Date();
+    const currentTime = currentDate.toLocaleTimeString("id-ID", {
+      hour12: false,
+      timeZone: "Asia/Jakarta",
+    });
+    // console.log("Current DateTime:", currentDate.toISOString());
+    // console.log("Current Time (WIB):", currentTime);
+
+    const result = await pool.query(
+      `SELECT 
+         id,
+         user_id,
+         tanggal,
+         kegiatan,
+         deskripsi,
+         jam_mulai,
+         jam_selesai,
+         (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME as current_time,
+         (CURRENT_DATE AT TIME ZONE 'Asia/Jakarta')::DATE as current_date
+       FROM jadwal_mendatang 
+       WHERE user_id = $1 
+       AND (tanggal < (CURRENT_DATE AT TIME ZONE 'Asia/Jakarta')::DATE
+            OR (tanggal = (CURRENT_DATE AT TIME ZONE 'Asia/Jakarta')::DATE 
+                AND jam_selesai <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME))
+       ORDER BY tanggal DESC, jam_mulai DESC`,
       [req.user.id]
     );
 
+    // Log each history schedule's comparison
+    // result.rows.forEach((row) => {
+    //   console.log("\nHistory Schedule Comparison:");
+    //   console.log("Schedule ID:", row.id);
+    //   console.log("Tanggal:", row.tanggal);
+    //   console.log("Current Date:", row.current_date);
+    //   console.log("Jam Mulai:", row.jam_mulai);
+    //   console.log("Jam Selesai:", row.jam_selesai);
+    //   console.log("Current Time:", row.current_time);
+    //   console.log("Is Past Date:", row.tanggal < row.current_date);
+    //   console.log(
+    //     "Is Today:",
+    //     row.tanggal.toDateString() === new Date().toDateString()
+    //   );
+    //   console.log("Is Finished:", row.jam_selesai <= row.current_time);
+    // });
+
     res.status(200).json({
       success: true,
-      data: rows,
+      data: result.rows.map((row) => ({
+        id: row.id,
+        user_id: row.user_id,
+        tanggal: row.tanggal,
+        kegiatan: row.kegiatan,
+        deskripsi: row.deskripsi,
+        jam_mulai: row.jam_mulai,
+        jam_selesai: row.jam_selesai,
+      })),
     });
   } catch (error) {
+    console.error("Error in getJadwalMendatangHistory:", error);
     res.status(500).json({
       success: false,
       error: error.message,

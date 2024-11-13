@@ -20,7 +20,8 @@
     "mysql2": "^3.11.3",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.16",
-    "openai": "^4.69.0"
+    "openai": "^4.69.0",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.7"

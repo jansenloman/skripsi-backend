@@ -3,14 +3,26 @@ const pool = require("../config/database");
 // Get jadwal kuliah
 const getJadwalKuliah = async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      "SELECT * FROM jadwal_kuliah WHERE user_id = ? ORDER BY FIELD(hari, 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'), jam_mulai",
+    const result = await pool.query(
+      `SELECT * FROM jadwal_kuliah 
+       WHERE user_id = $1 
+       ORDER BY 
+         CASE hari 
+           WHEN 'Senin' THEN 1 
+           WHEN 'Selasa' THEN 2 
+           WHEN 'Rabu' THEN 3 
+           WHEN 'Kamis' THEN 4 
+           WHEN 'Jumat' THEN 5 
+           WHEN 'Sabtu' THEN 6 
+           WHEN 'Minggu' THEN 7 
+         END,
+         jam_mulai`,
       [req.user.id]
     );
 
     res.status(200).json({
       success: true,
-      data: rows,
+      data: result.rows,
     });
   } catch (error) {
     res.status(500).json({
@@ -60,24 +72,18 @@ const addJadwalKuliah = async (req, res) => {
       });
     }
 
-    const [result] = await pool.query(
-      "INSERT INTO jadwal_kuliah (user_id, hari, jam_mulai, jam_selesai, mata_kuliah) VALUES (?, ?, ?, ?, ?)",
+    const result = await pool.query(
+      "INSERT INTO jadwal_kuliah (user_id, hari, jam_mulai, jam_selesai, mata_kuliah) VALUES ($1, $2, $3, $4, $5) RETURNING *",
       [req.user.id, hari, jam_mulai, jam_selesai, mata_kuliah]
     );
 
     res.status(201).json({
       success: true,
       message: "Jadwal kuliah berhasil ditambahkan",
-      data: {
-        kuliah_id: result.insertId,
-        user_id: req.user.id,
-        hari,
-        jam_mulai,
-        jam_selesai,
-        mata_kuliah,
-      },
+      data: result.rows[0],
     });
   } catch (error) {
+    console.error(error);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -99,12 +105,12 @@ const editJadwalKuliah = async (req, res) => {
       });
     }
 
-    const [result] = await pool.query(
-      "UPDATE jadwal_kuliah SET hari = ?, jam_mulai = ?, jam_selesai = ?, mata_kuliah = ? WHERE kuliah_id = ? AND user_id = ?",
+    const result = await pool.query(
+      "UPDATE jadwal_kuliah SET hari = $1, jam_mulai = $2, jam_selesai = $3, mata_kuliah = $4 WHERE kuliah_id = $5 AND user_id = $6 RETURNING *",
       [hari, jam_mulai, jam_selesai, mata_kuliah, kuliah_id, req.user.id]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({
         success: false,
         message: "Jadwal kuliah tidak ditemukan",
@@ -114,14 +120,7 @@ const editJadwalKuliah = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Jadwal kuliah berhasil diupdate",
-      data: {
-        kuliah_id,
-        user_id: req.user.id,
-        hari,
-        jam_mulai,
-        jam_selesai,
-        mata_kuliah,
-      },
+      data: result.rows[0],
     });
   } catch (error) {
     res.status(500).json({
@@ -136,12 +135,12 @@ const deleteJadwalKuliah = async (req, res) => {
   try {
     const { kuliah_id } = req.params;
 
-    const [result] = await pool.query(
-      "DELETE FROM jadwal_kuliah WHERE kuliah_id = ? AND user_id = ?",
+    const result = await pool.query(
+      "DELETE FROM jadwal_kuliah WHERE kuliah_id = $1 AND user_id = $2 RETURNING *",
       [kuliah_id, req.user.id]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({
         success: false,
         message: "Jadwal kuliah tidak ditemukan",

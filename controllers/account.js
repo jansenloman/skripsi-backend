@@ -10,89 +10,54 @@ const { sendVerificationEmail } = require("../utils/email");
 // Check user exist or not (Login)
 const checkEmail = async (req, res) => {
   const { email } = req.body;
-  const connection = await pool.getConnection();
+  const client = await pool.connect();
 
   try {
-    const [users] = await connection.execute(
-      "SELECT * FROM users WHERE email = ?",
-      [email]
-    );
+    const result = await client.query("SELECT * FROM users WHERE email = $1", [
+      email,
+    ]);
 
-    res.json({ exists: users.length > 0 });
+    res.json({ exists: result.rows.length > 0 });
   } catch (error) {
     res.status(400).json({ error: error.message });
   } finally {
-    connection.release();
+    client.release();
   }
 };
 
 // Register atau Login Function
 const registerOrLoginAccount = async (email, password) => {
-  const connection = await pool.getConnection();
+  const client = await pool.connect();
 
   try {
-    // Validasi input
-    if (!email || !password) {
-      throw new Error("Email and password are required");
-    }
+    await client.query("BEGIN");
 
-    // Log untuk debugging
-    console.log("Checking existing user for:", email);
+    const result = await client.query("SELECT * FROM users WHERE email = $1", [
+      email,
+    ]);
 
-    const [users] = await connection.execute(
-      "SELECT * FROM users WHERE email = ?",
-      [email]
-    );
-
-    let user = users[0];
+    let user = result.rows[0];
     let isNewUser = false;
 
     if (!user) {
-      console.log("Creating new user for:", email);
-
       const hashedPassword = await bcrypt.hash(password, 10);
       const verificationCode = generateVerificationCode();
       const codeExpiration = generateExpirationTime();
 
-      const [result] = await connection.execute(
-        "INSERT INTO users (email, password, verification_code, code_expiration, verified) VALUES (?, ?, ?, ?, FALSE)",
+      const insertResult = await client.query(
+        "INSERT INTO users (email, password, verification_code, code_expiration, verified) VALUES ($1, $2, $3, $4, FALSE) RETURNING user_id",
         [email, hashedPassword, verificationCode, codeExpiration]
       );
 
-      console.log("User created with ID:", result.insertId);
-
-      const emailSent = await sendVerificationEmail(email, verificationCode);
-      if (!emailSent) {
-        console.error("Failed to send verification email to:", email);
-      }
-
       user = {
-        user_id: result.insertId,
+        user_id: insertResult.rows[0].user_id,
         email,
         verified: false,
-        emailSent: emailSent,
       };
       isNewUser = true;
-    } else {
-      if (!user.verified) {
-        const verificationCode = generateVerificationCode();
-        const codeExpiration = generateExpirationTime();
-
-        await connection.execute(
-          "UPDATE users SET verification_code = ?, code_expiration = ? WHERE user_id = ?",
-          [verificationCode, codeExpiration, user.user_id]
-        );
-
-        await sendVerificationEmail(email, verificationCode);
-
-        throw new Error("Please verify your email first");
-      }
-
-      const validPassword = await bcrypt.compare(password, user.password);
-      if (!validPassword) {
-        throw new Error("Invalid password");
-      }
     }
+
+    await client.query("COMMIT");
 
     const token = jwt.sign({ userId: user.user_id }, process.env.JWT_SECRET, {
       expiresIn: "24h",
@@ -106,42 +71,42 @@ const registerOrLoginAccount = async (email, password) => {
       token: user.verified ? token : null,
     };
   } catch (error) {
-    console.error("Detailed error in registerOrLoginAccount:", error);
+    await client.query("ROLLBACK");
     throw error;
   } finally {
-    connection.release();
+    client.release();
   }
 };
 
 // Fungsi verifikasi (Email)
 const verifyEmail = async (req, res) => {
   const { code } = req.params;
-  const connection = await pool.getConnection();
+  const client = await pool.connect();
 
   try {
-    await connection.beginTransaction();
+    await client.query("BEGIN");
 
     console.log("Verifying code:", code);
 
     // Get user with verification code
-    const [users] = await connection.execute(
-      "SELECT user_id, email, verified, code_expiration FROM users WHERE verification_code = ?",
+    const result = await client.query(
+      "SELECT user_id, email, verified, code_expiration FROM users WHERE verification_code = $1",
       [code]
     );
 
-    if (users.length === 0) {
-      await connection.rollback();
+    if (result.rows.length === 0) {
+      await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
         message: "Kode verifikasi tidak valid",
       });
     }
 
-    const user = users[0];
+    const user = result.rows[0];
 
     // Cek expired
     if (new Date(user.code_expiration) < new Date()) {
-      await connection.rollback();
+      await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
         message: "Kode verifikasi sudah kadaluarsa",
@@ -154,12 +119,12 @@ const verifyEmail = async (req, res) => {
     });
 
     // Update user status
-    await connection.execute(
-      "UPDATE users SET verified = TRUE, verification_code = NULL WHERE user_id = ?",
+    await client.query(
+      "UPDATE users SET verified = TRUE, verification_code = NULL WHERE user_id = $1",
       [user.user_id]
     );
 
-    await connection.commit();
+    await client.query("COMMIT");
 
     console.log("Verification successful for user:", user.email);
 
@@ -170,29 +135,32 @@ const verifyEmail = async (req, res) => {
       email: user.email,
     });
   } catch (error) {
-    await connection.rollback();
+    await client.query("ROLLBACK");
     console.error("Verification error:", error);
     return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan saat verifikasi",
     });
   } finally {
-    connection.release();
+    client.release();
   }
 };
 
 // Fungsi resendVerification
 const resendVerification = async (req, res) => {
   const { email } = req.body;
-  const connection = await pool.getConnection();
+  const client = await pool.connect();
 
   try {
-    const [users] = await connection.execute(
-      "SELECT * FROM users WHERE email = ? AND verified = FALSE",
+    await client.query("BEGIN");
+
+    const result = await client.query(
+      "SELECT * FROM users WHERE email = $1 AND verified = FALSE",
       [email]
     );
 
-    if (users.length === 0) {
+    if (result.rows.length === 0) {
+      await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
         message: "Email tidak ditemukan atau sudah terverifikasi",
@@ -202,48 +170,52 @@ const resendVerification = async (req, res) => {
     const verificationCode = generateVerificationCode();
     const codeExpiration = generateExpirationTime();
 
-    await connection.execute(
-      "UPDATE users SET verification_code = ?, code_expiration = ? WHERE user_id = ?",
-      [verificationCode, codeExpiration, users[0].user_id]
+    await client.query(
+      "UPDATE users SET verification_code = $1, code_expiration = $2 WHERE user_id = $3",
+      [verificationCode, codeExpiration, result.rows[0].user_id]
     );
 
     const emailSent = await sendVerificationEmail(email, verificationCode);
     if (!emailSent) {
+      await client.query("ROLLBACK");
       throw new Error("Gagal mengirim email verifikasi");
     }
+
+    await client.query("COMMIT");
 
     res.json({
       success: true,
       message: "Email verifikasi telah dikirim ulang",
     });
   } catch (error) {
+    await client.query("ROLLBACK");
     res.status(500).json({
       success: false,
       message: error.message,
     });
   } finally {
-    connection.release();
+    client.release();
   }
 };
 
 const checkVerification = async (req, res) => {
   const { email } = req.body;
-  const connection = await pool.getConnection();
+  const client = await pool.connect();
 
   try {
-    const [users] = await connection.execute(
-      "SELECT user_id, email, verified FROM users WHERE email = ?",
+    const result = await client.query(
+      "SELECT user_id, email, verified FROM users WHERE email = $1",
       [email]
     );
 
-    if (users.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: "User tidak ditemukan",
       });
     }
 
-    const user = users[0];
+    const user = result.rows[0];
 
     if (user.verified) {
       // Generate token jika terverifikasi
@@ -270,7 +242,7 @@ const checkVerification = async (req, res) => {
       message: "Terjadi kesalahan saat mengecek verifikasi",
     });
   } finally {
-    connection.release();
+    client.release();
   }
 };
 
