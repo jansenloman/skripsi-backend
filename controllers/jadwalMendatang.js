@@ -245,7 +245,7 @@ const getJadwalMendatangHistory = async (req, res) => {
        AND (tanggal < (CURRENT_DATE AT TIME ZONE 'Asia/Jakarta')::DATE
             OR (tanggal = (CURRENT_DATE AT TIME ZONE 'Asia/Jakarta')::DATE 
                 AND jam_selesai <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME))
-       ORDER BY tanggal DESC, jam_mulai DESC`,
+       ORDER BY tanggal ASC, jam_mulai ASC`,
       [req.user.id]
     );
 

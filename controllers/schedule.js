@@ -1,21 +1,18 @@
 const openai = require("../config/openai");
 const pool = require("../config/database");
-const {
-  getProfileData,
-  getJadwalKuliahData,
-  getJadwalMendatangData,
-} = require("./profile");
+const { getProfileData } = require("./profile");
+const { formatDate, formatTime } = require("../utils/dateTimeHelper");
 
-// Get jadwal mingguan
-const getJadwalMingguan = async (req, res) => {
+const model = "gpt-4o";
+
+// Tambahkan fungsi helper untuk mengambil data jadwal
+const getJadwalKuliahData = async (userId) => {
   try {
     const result = await pool.query(
-      `SELECT j.schedule_id, j.hari, t.task_id, t.deskripsi, t.jam_mulai, t.jam_selesai 
-       FROM jadwal j 
-       LEFT JOIN task t ON j.schedule_id = t.schedule_id 
-       WHERE j.user_id = $1 
+      `SELECT * FROM jadwal_kuliah 
+       WHERE user_id = $1 
        ORDER BY 
-         CASE j.hari 
+         CASE hari 
            WHEN 'Senin' THEN 1 
            WHEN 'Selasa' THEN 2 
            WHEN 'Rabu' THEN 3 
@@ -24,32 +21,115 @@ const getJadwalMingguan = async (req, res) => {
            WHEN 'Sabtu' THEN 6 
            WHEN 'Minggu' THEN 7 
          END,
+         jam_mulai`,
+      [userId]
+    );
+    return result.rows;
+  } catch (error) {
+    throw error;
+  }
+};
+
+const getJadwalMendatangData = async (userId) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM jadwal_mendatang 
+       WHERE user_id = $1 
+       AND tanggal >= CURRENT_DATE 
+       ORDER BY tanggal, jam_mulai`,
+      [userId]
+    );
+    return result.rows;
+  } catch (error) {
+    throw error;
+  }
+};
+
+// Get jadwal mingguan
+const getJadwalMingguan = async (req, res) => {
+  try {
+    // Debug: Log user ID
+    console.log("Fetching schedule for user:", req.user.id);
+
+    const result = await pool.query(
+      `SELECT j.schedule_id, j.hari, 
+        t.task_id, t.deskripsi, t.jam_mulai, t.jam_selesai, 
+        t.type, t.suggestions
+       FROM jadwal j 
+       LEFT JOIN task t ON j.schedule_id = t.schedule_id 
+       WHERE j.user_id = $1 
+       ORDER BY 
+         CASE j.hari 
+           WHEN 'Monday' THEN 1 
+           WHEN 'Tuesday' THEN 2 
+           WHEN 'Wednesday' THEN 3 
+           WHEN 'Thursday' THEN 4 
+           WHEN 'Friday' THEN 5 
+           WHEN 'Saturday' THEN 6 
+           WHEN 'Sunday' THEN 7 
+         END,
          t.jam_mulai`,
       [req.user.id]
     );
 
-    // Format data
-    const formattedSchedule = result.rows.reduce((acc, curr) => {
-      if (!acc[curr.hari]) {
-        acc[curr.hari] = [];
-      }
-      if (curr.task_id) {
-        acc[curr.hari].push({
-          task_id: curr.task_id,
-          deskripsi: curr.deskripsi,
-          jam_mulai: curr.jam_mulai,
-          jam_selesai: curr.jam_selesai,
-        });
-      }
+    // Debug: Log raw query result
+    // console.log("Raw query result:", result.rows);
+
+    // Mapping hari Inggris ke Indonesia
+    const hariMapping = {
+      Monday: "Senin",
+      Tuesday: "Selasa",
+      Wednesday: "Rabu",
+      Thursday: "Kamis",
+      Friday: "Jumat",
+      Saturday: "Sabtu",
+      Sunday: "Minggu",
+    };
+
+    // Daftar hari dalam seminggu
+    const hariDefault = [
+      "Senin",
+      "Selasa",
+      "Rabu",
+      "Kamis",
+      "Jumat",
+      "Sabtu",
+      "Minggu",
+    ];
+
+    // Format data dengan memastikan semua hari ada
+    const formattedSchedule = hariDefault.reduce((acc, hari) => {
+      acc[hari] = [];
       return acc;
     }, {});
 
-    res.status(200).json({
+    // Debug log
+    // console.log("Result rows:", result.rows);
+
+    // Tambahkan task ke hari yang sesuai dengan pengecekan
+    result.rows.forEach((row) => {
+      if (row.task_id && row.hari && formattedSchedule[hariMapping[row.hari]]) {
+        formattedSchedule[hariMapping[row.hari]].push({
+          task_id: row.task_id,
+          deskripsi: row.deskripsi,
+          jam_mulai: row.jam_mulai,
+          jam_selesai: row.jam_selesai,
+          type: row.type,
+          suggestions: row.suggestions,
+        });
+      }
+    });
+
+    // Debug: Log final formatted schedule
+    // console.log("Formatted schedule:", formattedSchedule);
+
+    return res.status(200).json({
       success: true,
       schedule: formattedSchedule,
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("Error in getJadwalMingguan:", error);
+    return res.status(500).json({
       success: false,
       error: error.message,
     });
@@ -84,277 +164,143 @@ cron.schedule("59 23 * * 0", () => {
   deleteWeeklySchedule();
 });
 
+// Tambahkan helper function untuk membersihkan response
+const cleanJSONResponse = (response) => {
+  try {
+    // Mencari pattern JSON yang valid (dimulai dengan { dan diakhiri dengan })
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error("No valid JSON found in response");
+    }
+
+    // Parse JSON untuk memvalidasi
+    const cleanedJSON = JSON.parse(jsonMatch[0]);
+    return cleanedJSON;
+  } catch (error) {
+    throw new Error(`Failed to clean JSON response: ${error.message}`);
+  }
+};
+
+// Tambahkan mapping hari di level global
+const hariMappingReverse = {
+  Senin: "Monday",
+  Selasa: "Tuesday",
+  Rabu: "Wednesday",
+  Kamis: "Thursday",
+  Jumat: "Friday",
+  Sabtu: "Saturday",
+  Minggu: "Sunday",
+};
+
 // Generate schedule from OpenAI
 const generateSchedule = async (req, res) => {
+  const client = await pool.connect();
   try {
-    // Ambil semua data yang diperlukan
+    await client.query("BEGIN");
+
+    // 1. Simpan form input baru
+    const formInputResult = await client.query(
+      "INSERT INTO form_input (user_id, input, tambahan) VALUES ($1, $2, $3) RETURNING id",
+      [req.user.id, req.body.input || "", req.body.tambahan || ""]
+    );
+    const formInputId = formInputResult.rows[0].id;
+
+    // 2. Get all required data
     const profile = await getProfileData(req.user.id);
-    const jadwalKuliah = await getJadwalKuliahData(req.user.id);
-    const jadwalMendatang = await getJadwalMendatangData(req.user.id);
-    const [formInput] = await pool.query(
-      "SELECT input, tambahan FROM form_input WHERE user_id = ? ORDER BY form_id DESC LIMIT 1",
+    const settings = await pool.query(
+      "SELECT * FROM user_schedule_settings WHERE user_id = $1",
       [req.user.id]
     );
-
-    const promptWithContext = `
-      Buatkan jadwal mingguan berdasarkan data berikut:
-
-      1. PROFIL PENGGUNA (untuk personalisasi jadwal):
-      ${(() => {
-        if (!profile) return "Tidak ada data profil";
-        return `
-        - Nama: ${profile.name || "Tidak ada"}
-        - Hobi: ${profile.hobby || "Tidak ada"}
-        - Kegiatan Harian: ${profile.daily_task || "Tidak ada"}
-        - Detail Lain: ${profile.other_details || "Tidak ada"}`;
-      })()}
-
-      2. INPUT JADWAL DARI PENGGUNA:
-      ${formInput?.input || "Tidak ada input jadwal"}
-      Detail Tambahan: ${formInput?.tambahan || "Tidak ada"}
-
-      3. JADWAL TETAP:
-      Jadwal Kuliah:
-      ${
-        jadwalKuliah.length > 0
-          ? jadwalKuliah
-              .map(
-                (jk) =>
-                  `- ${jk.hari}: ${jk.mata_kuliah} (${jk.jam_mulai} - ${jk.jam_selesai})`
-              )
-              .join("\n")
-          : "Tidak ada jadwal kuliah"
-      }
-
-      Jadwal Mendatang:
-      ${
-        jadwalMendatang.length > 0
-          ? jadwalMendatang
-              .map(
-                (jm) =>
-                  `- ${formatDate(jm.tanggal)}: ${jm.kegiatan} (${formatTime(
-                    jm.jam_mulai
-                  )} - ${formatTime(jm.jam_selesai)})`
-              )
-              .join("\n")
-          : "Tidak ada jadwal mendatang"
-      }
-
-      ATURAN PEMBUATAN JADWAL:
-      1. Jadwal kuliah dan jadwal mendatang adalah jadwal tetap yang tidak bisa diubah, kecuali jika user mengubahnya dari form_input
-      2. Sesuaikan jadwal dengan kegiatan harian dan hobi pengguna
-      3. Berikan jadwal yang seimbang antara kegiatan akademik, pribadi, dan waktu istirahat
-      4. Periksa konflik jadwal sebelum memberikan hasil final
-
-      Harap berikan jadwal dalam format JSON berikut:
-      {
-        "hasConflict": boolean,
-        "conflicts": [
-          {
-            "day": "string",
-            "eventA": { "task": "string", "time": "HH:mm - HH:mm" },
-            "eventB": { "task": "string", "time": "HH:mm - HH:mm" },
-            "options": [
-              {
-                "id": number,
-                "description": "string",
-                "impact": "string"
-              }
-            ]
-          }
-        ],
-        "schedule": [
-          {
-            "day": "string",
-            "daily": [
-              {
-                "task": "string",
-                "time": "HH:mm - HH:mm"
-              }
-            ]
-          }
-        ]
-      }
-    `;
-
-    const completion = await openai.chat.completions.create({
-      messages: [
-        {
-          role: "system",
-          content:
-            "Anda adalah asisten AI yang ahli dalam membuat jadwal mingguan yang terstruktur, efisien, dan mempertimbangkan keseimbangan waktu. Anda akan menganalisis semua input dan membuat jadwal yang optimal dengan mempertimbangkan jadwal tetap, preferensi pengguna, dan menghindari konflik jadwal.",
-        },
-        {
-          role: "user",
-          content: promptWithContext,
-        },
-      ],
-      model: "gpt-4",
-      temperature: 0.7,
-      max_tokens: 4000,
-      response_format: { type: "json_object" },
-    });
-
-    const response = JSON.parse(completion.choices[0].message.content);
-
-    // Preview jadwal ke user
-    res.status(200).json({
-      success: true,
-      hasConflict: response.hasConflict,
-      conflicts: response.conflicts,
-      schedule: response.schedule,
-    });
-  } catch (error) {
-    console.error("Error in generateSchedule:", error);
-
-    // Handle OpenAI API errors
-    if (error.response?.status === 429) {
-      return res.status(429).json({
-        success: false,
-        error: "Rate limit exceeded. Please try again later.",
-      });
-    }
-
-    // Handle database errors
-    if (error.code === "ER_NO_SUCH_TABLE") {
-      return res.status(500).json({
-        success: false,
-        error: "Database table not found",
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
-};
-
-// Regenerate schedule from OpenAI
-const regenerateSchedule = async (req, res) => {
-  try {
-    // Ambil input sebelumnya dari database
-    const [previousInput] = await pool.query(
-      "SELECT input, tambahan FROM form_input WHERE user_id = ? ORDER BY form_id DESC LIMIT 1",
-      [req.user.id]
-    );
-
-    // Gunakan input yang baru jika ada, atau gunakan input sebelumnya
-    const formInput = req.body.input || previousInput?.input;
-    const tambahan = req.body.tambahan || previousInput?.tambahan;
-
-    // Gunakan logika yang sama dengan generateSchedule
-    const profile = await getProfileData(req.user.id);
     const jadwalKuliah = await getJadwalKuliahData(req.user.id);
     const jadwalMendatang = await getJadwalMendatangData(req.user.id);
 
+    // 3. Generate schedule dengan OpenAI
     const promptWithContext = `
-      Buatkan jadwal mingguan dengan detail berikut:
+      Buatkan jadwal mingguan lengkap (full day schedule) berdasarkan data berikut:
+
+      INPUT PENGGUNA:
+      ${req.body.input}
+      
+      DETAIL TAMBAHAN:
+      ${req.body.tambahan || "Tidak ada"}
 
       PROFIL PENGGUNA:
-      ${(() => {
-        if (!profile) return "Tidak ada data profil";
+      ${formatProfileData(profile)}
 
-        return `
-      - Nama: ${profile.name ? profile.name : "Tidak ada"}
-      - Hobi: ${profile.hobby ? profile.hobby : "Tidak ada"}
-      - Kegiatan Harian: ${
-        profile.daily_task ? profile.daily_task : "Tidak ada"
-      }
-      - Detail Lain: ${
-        profile.other_details ? profile.other_details : "Tidak ada"
-      }`;
-      })()}
+      PENGATURAN JADWAL:
+      ${formatSettings(settings)}
 
       JADWAL KULIAH:
-      ${
-        jadwalKuliah.length > 0
-          ? jadwalKuliah
-              .map(
-                (jk) =>
-                  `- ${jk.hari}: ${jk.mata_kuliah} (${jk.jam_mulai} - ${jk.jam_selesai})`
-              )
-              .join("\n")
-          : "Tidak ada jadwal kuliah"
-      }
+      ${formatJadwalKuliah(jadwalKuliah)}
 
       JADWAL MENDATANG:
-      ${
-        jadwalMendatang.length > 0
-          ? jadwalMendatang
-              .map(
-                (jm) => `- ${jm.tanggal}: ${jm.jam_mulai} - ${jm.jam_selesai}`
-              )
-              .join("\n")
-          : "Tidak ada jadwal mendatang"
-      }
+      ${formatJadwalMendatang(jadwalMendatang)}
 
-      DETAIL TAMBAHAN:
-      ${tambahan || "Tidak ada detail tambahan"}
+      ATURAN PENTING:
+      1. Buat jadwal LENGKAP dari waktu bangun hingga waktu tidur sesuai pengaturan tanpa adanya waktu yang dilewatkan dari hari Senin sampai Minggu
+      2. Waktu aktivitas harus dalam rentang waktu yang ditentukan di pengaturan
+      3. Durasi setiap aktivitas tidak boleh melebihi ${
+        settings.rows[0]?.durasi_max || 120
+      } menit
+      4. Berikan jeda waktu istirahat ${
+        settings.rows[0]?.waktu_istirahat || 15
+      } menit antar aktivitas
+      5. Berikan kisaran waktu perjalanan antar tempat yang realistis
+      6. Hindari konflik dengan jadwal kuliah dan jadwal mendatang
+      7. Prioritaskan preferensi tambahan dari pengaturan
+      8. PENTING: Jangan membuat jadwal yang tumpang tindih!
 
-      JADWAL SEBELUMNYA:
-      ${JSON.stringify(previousInput, null, 2)}
+      ATURAN KESEJAHTERAAN PENGGUNA:
+      9. Perhatikan pola aktivitas dan beban mental:
+         - Setelah 2-3 jam aktivitas berat (kuliah/belajar), WAJIB ada istirahat minimal 15-30 menit
+         - Setelah aktivitas menguras mental, berikan saran aktivitas refreshing
+         - Jangan letakkan terlalu banyak aktivitas berat berturut-turut
+         - Sisipkan waktu untuk sosialisasi dan relaksasi
 
-      PENTING: Sebelum memberikan jadwal final, periksa apakah ada konflik jadwal.
-      Jika menemukan konflik jadwal (jadwal yang waktunya bertabrakan), berikan response dalam format berikut:
+      10. Waktu Luang dan Saran Aktivitas:
+          - Untuk waktu luang pendek (< 1 jam): fokus pada aktivitas refreshing atau persiapan
+          - Untuk waktu luang medium (1-2 jam): bisa untuk aktivitas produktif ringan atau hobi
+          - Untuk waktu luang panjang (> 2 jam): bisa dibagi untuk produktif dan hobi
+          - PENTING: Saran harus mempertimbangkan:
+            * Tingkat kelelahan dari aktivitas sebelumnya
+            * Persiapan untuk aktivitas selanjutnya
+            * Kebutuhan sosialisasi
+            * Hobi dan preferensi pengguna
+
+      11. Fleksibilitas dan Keseimbangan:
+          - Berikan minimal 2-3 opsi saran untuk setiap waktu luang
+          - Sertakan kombinasi aktivitas produktif dan refreshing
+          - Untuk waktu malam, prioritaskan aktivitas yang menenangkan
+          - Jika ada jadwal padat di siang hari, berikan waktu istirahat yang cukup di malam hari
+
+      12. Format Waktu dan Transisi:
+          - Contoh format jadwal:
+            * "Kuliah Pagi (09:00 - 12:00)" [fixed]
+            * "Istirahat & Makan Siang (12:00 - 13:00)" [basic]
+            * "Waktu Luang (13:00 - 14:00)" [free] - Saran: 1) Review materi kuliah, 2) Istirahat sejenak, 3) Persiapan kuliah siang
+            * "Perjalanan ke Kampus (14:00 - 14:30)" [basic]
+            * "Kuliah Siang (14:30 - 17:00)" [fixed]
+      
+      13. Akhiri hari dengan waktu Tidur dan Waktu Bangun yang sudah diatur di pengaturan
+
+      PENTING: Berikan respons HANYA dalam format JSON berikut:
       {
-        "hasConflict": true,
-        "conflicts": [
-          {
-            "day": "Nama Hari",
-            "eventA": {
-              "task": "Deskripsi Event A",
-              "time": "HH:mm - HH:mm"
-            },
-            "eventB": {
-              "task": "Deskripsi Event B",
-              "time": "HH:mm - HH:mm"
-            },
-            "options": [
-              {
-                "id": 1,
-                "description": "Prioritaskan [Event A]",
-                "impact": "[Event B] akan dijadwalkan ulang ke waktu berikutnya yang tersedia"
-              },
-              {
-                "id": 2,
-                "description": "Prioritaskan [Event B]",
-                "impact": "[Event A] akan dijadwalkan ulang ke waktu berikutnya yang tersedia"
-              },
-              {
-                "id": 3,
-                "description": "Bagi waktu untuk kedua event",
-                "impact": "Kedua event akan dipersingkat durasinya"
-              }
-            ]
-          }
-        ]
-      }
-
-      Jika tidak ada konflik, berikan jadwal dalam format JSON berikut:
-      {
-        "hasConflict": false,
         "schedule": [
           {
-            "day": "Nama Hari, Tanggal",
+            "day": "string (Senin/Selasa/Rabu/Kamis/Jumat/Sabtu/Minggu)",
             "daily": [
               {
-                "task": "Deskripsi Kegiatan",
-                "time": "HH:mm" atau "HH:mm - HH:mm"
+                "task": "string (deskripsi aktivitas)",
+                "time": "HH:mm - HH:mm (format 24 jam)",
+                "type": "fixed|basic|free",
+                "suggestions": "string (wajib diisi untuk type free, berikan 2-3 opsi yang relevan)"
               }
             ]
           }
         ]
       }
 
-      Aturan pembuatan jadwal:
-      1. Waktu bangun pagi: 07:00
-      2. Waktu tidur malam: 23:00
-      3. Sertakan waktu makan (sarapan, makan siang, makan malam)
-      4. Berikan waktu istirahat setelah 2-3 jam aktivitas
-      5. Prioritaskan jadwal kuliah yang sudah ada
-      6. Sesuaikan dengan hobi dan kegiatan harian dari profil
-      7. Masukkan jadwal mendatang yang sudah direncanakan
+      Pastikan tidak ada jadwal yang tumpang tindih dan setiap aktivitas panjang dibagi menjadi beberapa sesi dengan istirahat yang jelas.
     `;
 
     const completion = await openai.chat.completions.create({
@@ -362,250 +308,172 @@ const regenerateSchedule = async (req, res) => {
         {
           role: "system",
           content:
-            "Anda adalah asisten yang membantu membuat jadwal mingguan yang terstruktur dan efisien.",
+            "Kamu adalah JSON generator yang HANYA menghasilkan output JSON tanpa teks tambahan. Setiap respons HARUS dimulai dengan { dan diakhiri dengan } tanpa karakter tambahan apapun.",
         },
         {
           role: "user",
           content: promptWithContext,
         },
       ],
-      model: "gpt-4",
+      model: model,
       temperature: 0.7,
-      max_tokens: 4000,
       response_format: { type: "json_object" },
     });
 
-    const response = JSON.parse(completion.choices[0].message.content);
+    const rawResponse = completion.choices[0].message.content;
+    const generatedSchedule = cleanJSONResponse(rawResponse);
 
-    // Cek apakah ada konflik
-    if (response.hasConflict) {
-      res.status(200).json({
-        success: true,
-        hasConflict: true,
-        conflicts: response.conflicts,
-      });
-    } else {
-      // Validasi schedule format
-      if (!response.schedule || !Array.isArray(response.schedule)) {
-        throw new Error("Invalid schedule format from OpenAI");
-      }
-
-      res.status(200).json({
-        success: true,
-        hasConflict: false,
-        schedule: response.schedule,
-      });
-    }
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
-};
-
-// Save generated schedule to database
-const saveSchedule = async (req, res) => {
-  const connection = await pool.getConnection();
-  try {
-    const { schedule } = req.body;
-    await connection.beginTransaction();
-
-    // Hapus jadwal lama user
-    await connection.query(
-      "DELETE j, t FROM jadwal j LEFT JOIN task t ON j.schedule_id = t.schedule_id WHERE j.user_id = ?",
-      [req.user.id]
+    // 4. Simpan ke generated_schedules
+    await client.query(
+      `INSERT INTO generated_schedules (user_id, form_input_id, schedule_data)
+       VALUES ($1, $2, $3)`,
+      [req.user.id, formInputId, generatedSchedule]
     );
 
-    // Validasi schedule
-    if (!schedule?.schedule || !Array.isArray(schedule.schedule)) {
-      throw new Error("Invalid schedule format");
-    }
+    // 5. Hapus jadwal lama jika ada
+    await client.query(
+      `DELETE FROM task 
+       WHERE schedule_id IN (
+         SELECT schedule_id FROM jadwal WHERE user_id = $1
+       )`,
+      [req.user.id]
+    );
+    await client.query("DELETE FROM jadwal WHERE user_id = $1", [req.user.id]);
 
-    for (const daySchedule of schedule.schedule) {
-      if (
-        !daySchedule.day ||
-        !daySchedule.daily ||
-        !Array.isArray(daySchedule.daily)
-      ) {
-        throw new Error("Invalid day schedule format");
-      }
+    // 6. Simpan jadwal baru
+    for (const day of generatedSchedule.schedule) {
+      console.log("Saving day:", day);
 
-      const hari = daySchedule.day.split(",")[0].trim();
-
-      // Validasi hari
-      if (
-        ![
-          "Senin",
-          "Selasa",
-          "Rabu",
-          "Kamis",
-          "Jumat",
-          "Sabtu",
-          "Minggu",
-        ].includes(hari)
-      ) {
-        throw new Error(`Invalid day format: ${hari}`);
-      }
-
-      const [jadwalResult] = await connection.query(
-        "INSERT INTO jadwal (user_id, hari) VALUES (?, ?)",
-        [req.user.id, hari]
+      const jadwalResult = await client.query(
+        "INSERT INTO jadwal (user_id, hari, form_input_id) VALUES ($1, $2, $3) RETURNING schedule_id",
+        [req.user.id, hariMappingReverse[day.day], formInputId]
       );
 
-      const schedule_id = jadwalResult.insertId;
+      const scheduleId = jadwalResult.rows[0].schedule_id;
 
-      for (const task of daySchedule.daily) {
-        if (!task.task || !task.time) {
-          throw new Error("Invalid task format");
-        }
-
-        let [jam_mulai, jam_selesai] = task.time.includes(" - ")
-          ? task.time.split(" - ")
-          : [task.time, null];
-
-        // Validasi format waktu
-        const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
-        if (
-          !timeRegex.test(jam_mulai) ||
-          (jam_selesai && !timeRegex.test(jam_selesai))
-        ) {
-          throw new Error(`Invalid time format: ${task.time}`);
-        }
-
-        await connection.query(
-          "INSERT INTO task (schedule_id, deskripsi, jam_mulai, jam_selesai) VALUES (?, ?, ?, ?)",
-          [schedule_id, task.task, jam_mulai, jam_selesai]
+      // Simpan tasks dengan type dan suggestions
+      for (const task of day.daily) {
+        const [jamMulai, jamSelesai] = task.time.split(" - ");
+        await client.query(
+          `INSERT INTO task (
+            schedule_id, 
+            deskripsi, 
+            jam_mulai, 
+            jam_selesai, 
+            type, 
+            suggestions
+          ) VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            scheduleId,
+            task.task,
+            jamMulai,
+            jamSelesai,
+            task.type || "basic", // default ke 'basic' jika tidak ada
+            task.suggestions || null, // null jika tidak ada suggestions
+          ]
         );
       }
     }
 
-    await connection.commit();
+    await client.query("COMMIT");
+
     res.status(200).json({
       success: true,
-      message: "Schedule saved successfully",
+      schedule: generatedSchedule.schedule,
     });
   } catch (error) {
-    await connection.rollback();
+    await client.query("ROLLBACK");
+    console.error("Error in generateSchedule:", error);
     res.status(500).json({
       success: false,
       error: error.message,
     });
   } finally {
-    connection.release();
+    client.release();
   }
 };
 
-const resolveScheduleConflict = async (req, res) => {
+// Tambahkan fungsi helper untuk format settings
+const formatSettings = (settings) => {
+  if (!settings.rows[0]) return "Tidak ada pengaturan jadwal";
+
+  const s = settings.rows[0];
+  return `
+    Waktu Bangun: ${formatTime(s.wake_time)}
+    Waktu Tidur: ${formatTime(s.sleep_time)}
+    
+    Waktu Makan:
+    - Sarapan: ${formatTime(s.breakfast_time)} (${s.breakfast_duration} menit)
+    - Makan Siang: ${formatTime(s.lunch_time)} (${s.lunch_duration} menit)
+    - Makan Malam: ${formatTime(s.dinner_time)} (${s.dinner_duration} menit)
+    
+    Waktu Istirahat: ${formatTime(s.rest_time)} (${s.rest_duration} menit)
+    
+    Waktu Produktif:
+    - Mulai: ${formatTime(s.productive_time_start)}
+    - Selesai: ${formatTime(s.productive_time_end)}
+  `.trim();
+};
+
+// Pastikan semua fungsi format sudah ada
+const formatProfileData = (profile) => {
+  if (!profile) return "Tidak ada data profil";
+  return `
+    Nama: ${profile.name || "Tidak diisi"}
+    Hobi: ${profile.hobby || "Tidak diisi"}
+    Kegiatan Harian: ${profile.daily_task || "Tidak diisi"}
+    Detail Lain: ${profile.other_details || "Tidak diisi"}
+  `.trim();
+};
+
+const formatJadwalKuliah = (jadwalKuliah) => {
+  if (!jadwalKuliah.length) return "Tidak ada jadwal kuliah";
+  return jadwalKuliah
+    .map(
+      (jk) =>
+        `- ${jk.hari}: ${jk.mata_kuliah} (${formatTime(
+          jk.jam_mulai
+        )} - ${formatTime(jk.jam_selesai)})`
+    )
+    .join("\n");
+};
+
+const formatJadwalMendatang = (jadwalMendatang) => {
+  if (!jadwalMendatang.length) return "Tidak ada jadwal mendatang";
+  return jadwalMendatang
+    .map(
+      (jm) =>
+        `- ${formatDate(jm.tanggal)}: ${jm.kegiatan} (${formatTime(
+          jm.jam_mulai
+        )} - ${formatTime(jm.jam_selesai)})`
+    )
+    .join("\n");
+};
+
+// Get last form input
+const getLastFormInput = async (req, res) => {
   try {
-    const { conflictResolutions } = req.body;
-    // conflictResolutions format:
-    // [{
-    //   day: "Nama Hari",
-    //   selectedOption: 1|2|3,
-    //   eventA: {...},
-    //   eventB: {...}
-    // }]
+    const result = await pool.query(
+      `SELECT * FROM form_input 
+       WHERE user_id = $1 
+       ORDER BY created_at DESC 
+       LIMIT 1`,
+      [req.user.id]
+    );
 
-    const profile = await getProfileData(req.user.id);
-    const jadwalKuliah = await getJadwalKuliahData(req.user.id);
-    const jadwalMendatang = await getJadwalMendatangData(req.user.id);
-
-    const promptWithContext = `
-      Buatkan ulang jadwal dengan mempertimbangkan resolusi konflik berikut:
-      ${JSON.stringify(conflictResolutions, null, 2)}
-
-      Detail resolusi yang dipilih user:
-      ${conflictResolutions
-        .map(
-          (resolution) => `
-        Hari: ${resolution.day}
-        Event A: ${resolution.eventA.task} (${resolution.eventA.time})
-        Event B: ${resolution.eventB.task} (${resolution.eventB.time})
-        Pilihan: ${resolution.selectedOption}
-      `
-        )
-        .join("\n")}
-
-      PROFIL PENGGUNA:
-      ${(() => {
-        if (!profile) return "Tidak ada data profil";
-
-        return `
-      - Nama: ${profile.name ? profile.name : "Tidak ada"}
-      - Hobi: ${profile.hobby ? profile.hobby : "Tidak ada"}
-      - Kegiatan Harian: ${
-        profile.daily_task ? profile.daily_task : "Tidak ada"
-      }
-      - Detail Lain: ${
-        profile.other_details ? profile.other_details : "Tidak ada"
-      }`;
-      })()}
-
-      JADWAL KULIAH:
-      ${
-        jadwalKuliah.length > 0
-          ? jadwalKuliah
-              .map(
-                (jk) =>
-                  `- ${jk.hari}: ${jk.mata_kuliah} (${jk.jam_mulai} - ${jk.jam_selesai})`
-              )
-              .join("\n")
-          : "Tidak ada jadwal kuliah"
-      }
-
-      JADWAL MENDATANG:
-      ${
-        jadwalMendatang.length > 0
-          ? jadwalMendatang
-              .map(
-                (jm) => `- ${jm.tanggal}: ${jm.jam_mulai} - ${jm.jam_selesai}`
-              )
-              .join("\n")
-          : "Tidak ada jadwal mendatang"
-      }
-
-      Harap berikan jadwal baru dalam format JSON berikut:
-      {
-        "schedule": [
-          {
-            "day": "Nama Hari, Tanggal",
-            "daily": [
-              {
-                "task": "Deskripsi Kegiatan",
-                "time": "HH:mm" atau "HH:mm - HH:mm"
-              }
-            ]
-          }
-        ]
-      }
-    `;
-
-    const completion = await openai.chat.completions.create({
-      messages: [
-        {
-          role: "system",
-          content:
-            "Anda adalah asisten yang membantu membuat jadwal mingguan yang terstruktur dan efisien.",
-        },
-        {
-          role: "user",
-          content: promptWithContext,
-        },
-      ],
-      model: "gpt-4",
-      temperature: 0.7,
-      max_tokens: 4000,
-      response_format: { type: "json_object" },
-    });
-
-    const schedule = JSON.parse(completion.choices[0].message.content);
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "No previous form input found",
+      });
+    }
 
     res.status(200).json({
       success: true,
-      schedule: schedule,
+      formInput: result.rows[0],
     });
   } catch (error) {
+    console.error("Error in getLastFormInput:", error);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -613,10 +481,9 @@ const resolveScheduleConflict = async (req, res) => {
   }
 };
 
+// Export semua fungsi yang dibutuhkan
 module.exports = {
   generateSchedule,
-  regenerateSchedule,
-  saveSchedule,
   getJadwalMingguan,
-  resolveScheduleConflict,
+  getLastFormInput,
 };

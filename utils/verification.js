@@ -6,7 +6,7 @@ const generateVerificationCode = () => {
 
 const generateExpirationTime = () => {
   const expirationTime = new Date();
-  expirationTime.setHours(expirationTime.getHours() + 24); // Kode berlaku 24 jam
+  expirationTime.setHours(expirationTime.getHours() + 24);
   return expirationTime;
 };
 

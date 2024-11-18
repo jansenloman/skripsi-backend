@@ -6,6 +6,11 @@ const {
   resendVerification,
   checkVerification,
 } = require("../controllers/account");
+const {
+  getScheduleSettings,
+  updateScheduleSettings,
+} = require("../controllers/settings");
+const authMiddleware = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -56,5 +61,9 @@ router.post("/resend-verification", resendVerification);
 
 // Add check verification route
 router.post("/check-verification", checkVerification);
+
+// Route for settings
+router.get("/settings", authMiddleware, getScheduleSettings);
+router.put("/settings", authMiddleware, updateScheduleSettings);
 
 module.exports = router;
