@@ -342,7 +342,7 @@ const generateSchedule = async (req, res) => {
 
     // 6. Simpan jadwal baru
     for (const day of generatedSchedule.schedule) {
-      console.log("Saving day:", day);
+      // console.log("Saving day:", day);
 
       const jadwalResult = await client.query(
         "INSERT INTO jadwal (user_id, hari, form_input_id) VALUES ($1, $2, $3) RETURNING schedule_id",
@@ -488,10 +488,10 @@ const getUpcomingSchedule = async (req, res) => {
     const currentDay = currentTime.toLocaleString("en-US", { weekday: "long" });
     const currentTimeStr = currentTime.toTimeString().slice(0, 5);
 
-    console.log("Debug Info:");
-    console.log("User ID:", req.user.id);
-    console.log("Current Day:", currentDay);
-    console.log("Current Time:", currentTimeStr);
+    // console.log("Debug Info:");
+    // console.log("User ID:", req.user.id);
+    // console.log("Current Day:", currentDay);
+    // console.log("Current Time:", currentTimeStr);
 
     const result = await pool.query(
       `SELECT 
