@@ -10,6 +10,18 @@ const validateTime = (jamMulai, jamSelesai) => {
   return endTime > startTime;
 };
 
+const validateDateTime = (tanggal, jamMulai) => {
+  const now = new Date();
+  const [hours, minutes] = jamMulai.split(":");
+  const inputDateTime = new Date(tanggal);
+  inputDateTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+
+  // Toleransi 1 menit untuk detik
+  const nowWithTolerance = new Date(now.getTime() - 60000);
+
+  return inputDateTime >= nowWithTolerance;
+};
+
 // Get jadwal mendatang (yang belum lewat)
 const getJadwalMendatang = async (req, res) => {
   try {
@@ -76,38 +88,19 @@ const addJadwalMendatang = async (req, res) => {
       jam_selesai,
     } = req.body;
 
-    // Validasi tanggal
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const inputDate = new Date(tanggal + "T00:00:00");
-
-    if (inputDate < today) {
-      return res.status(400).json({
-        success: false,
-        error: "Tidak dapat menambahkan jadwal untuk tanggal yang sudah lewat",
-      });
-    }
-
-    // Jika tanggal sama dengan hari ini, validasi jam
-    if (inputDate.getTime() === today.getTime()) {
-      const now = new Date();
-      const [hours, minutes] = jam_mulai.split(":");
-      const inputTime = new Date();
-      inputTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
-
-      if (inputTime < now) {
-        return res.status(400).json({
-          success: false,
-          error: "Tidak dapat menambahkan jadwal untuk waktu yang sudah lewat",
-        });
-      }
-    }
-
-    // Validasi waktu
+    // Validasi waktu selesai harus lebih besar dari waktu mulai
     if (!validateTime(jam_mulai, jam_selesai)) {
       return res.status(400).json({
         success: false,
         error: "Jam selesai harus lebih besar dari jam mulai",
+      });
+    }
+
+    // Validasi datetime
+    if (!validateDateTime(tanggal, jam_mulai)) {
+      return res.status(400).json({
+        success: false,
+        error: "Tidak dapat menambahkan jadwal untuk waktu yang sudah lewat",
       });
     }
 

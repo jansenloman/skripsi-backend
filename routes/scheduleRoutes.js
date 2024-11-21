@@ -7,6 +7,7 @@ const {
   // regenerateSchedule,
   getJadwalMingguan,
   // resolveScheduleConflict,
+  getUpcomingSchedule,
 } = require("../controllers/schedule");
 
 const {
@@ -55,6 +56,9 @@ router.get("/jadwal-mendatang/history", getJadwalMendatangHistory);
 router.post("/jadwal-mendatang", addJadwalMendatang);
 router.put("/jadwal-mendatang/:id", editJadwalMendatang);
 router.delete("/jadwal-mendatang/:id", deleteJadwalMendatang);
+
+// Tambahkan route untuk upcoming schedule
+router.get("/upcoming", getUpcomingSchedule);
 
 // // Resolve schedule conflict
 // router.post("/resolve-schedule-conflict", resolveScheduleConflict);

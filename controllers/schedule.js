@@ -164,7 +164,7 @@ cron.schedule("59 23 * * 0", () => {
   deleteWeeklySchedule();
 });
 
-// Tambahkan helper function untuk membersihkan response
+// Helper function untuk membersihkan response
 const cleanJSONResponse = (response) => {
   try {
     // Mencari pattern JSON yang valid (dimulai dengan { dan diakhiri dengan })
@@ -181,7 +181,7 @@ const cleanJSONResponse = (response) => {
   }
 };
 
-// Tambahkan mapping hari di level global
+// Mapping hari di level global
 const hariMappingReverse = {
   Senin: "Monday",
   Selasa: "Tuesday",
@@ -354,6 +354,7 @@ const generateSchedule = async (req, res) => {
       // Simpan tasks dengan type dan suggestions
       for (const task of day.daily) {
         const [jamMulai, jamSelesai] = task.time.split(" - ");
+
         await client.query(
           `INSERT INTO task (
             schedule_id, 
@@ -368,8 +369,8 @@ const generateSchedule = async (req, res) => {
             task.task,
             jamMulai,
             jamSelesai,
-            task.type || "basic", // default ke 'basic' jika tidak ada
-            task.suggestions || null, // null jika tidak ada suggestions
+            task.type || "basic",
+            task.suggestions || null,
           ]
         );
       }
@@ -481,9 +482,107 @@ const getLastFormInput = async (req, res) => {
   }
 };
 
-// Export semua fungsi yang dibutuhkan
+const getUpcomingSchedule = async (req, res) => {
+  try {
+    const currentTime = new Date();
+    const currentDay = currentTime.toLocaleString("en-US", { weekday: "long" });
+    const currentTimeStr = currentTime.toTimeString().slice(0, 5);
+
+    console.log("Debug Info:");
+    console.log("User ID:", req.user.id);
+    console.log("Current Day:", currentDay);
+    console.log("Current Time:", currentTimeStr);
+
+    const result = await pool.query(
+      `SELECT 
+        j.hari,
+        t.deskripsi as title,
+        t.jam_mulai,
+        t.jam_selesai,
+        t.type,
+        t.suggestions as description
+      FROM jadwal j
+      INNER JOIN task t ON j.schedule_id = t.schedule_id
+      WHERE j.user_id = $1
+      AND j.hari = $2  -- Hanya ambil jadwal hari ini
+      AND t.jam_mulai > $3  -- Waktu harus lebih besar dari waktu sekarang
+      AND (
+        -- Ambil jadwal fixed (kuliah, meeting, dll)
+        t.type = 'fixed'
+        OR
+        -- Ambil jadwal free yang penting (belajar, tugas)
+        (t.type = 'free' AND (
+          t.deskripsi ILIKE '%belajar%' OR
+          t.deskripsi ILIKE '%tugas%' OR
+          t.deskripsi ILIKE '%kerja%' OR
+          t.deskripsi ILIKE '%meeting%' OR
+          t.deskripsi ILIKE '%rapat%' OR
+          t.deskripsi ILIKE '%deadline%' OR
+          t.deskripsi ILIKE '%project%' OR
+          t.deskripsi ILIKE '%presentasi%' OR
+          t.deskripsi ILIKE '%ujian%' OR
+          t.deskripsi ILIKE '%kuis%'
+        ))
+      )
+      ORDER BY 
+        CASE j.hari 
+          WHEN 'Monday' THEN 1
+          WHEN 'Tuesday' THEN 2
+          WHEN 'Wednesday' THEN 3
+          WHEN 'Thursday' THEN 4
+          WHEN 'Friday' THEN 5
+          WHEN 'Saturday' THEN 6
+          WHEN 'Sunday' THEN 7
+        END,
+        t.jam_mulai
+      LIMIT 1`,
+      [req.user.id, currentDay, currentTimeStr]
+    );
+
+    // Mapping hari untuk response
+    const hariMapping = {
+      Monday: "Senin",
+      Tuesday: "Selasa",
+      Wednesday: "Rabu",
+      Thursday: "Kamis",
+      Friday: "Jumat",
+      Saturday: "Sabtu",
+      Sunday: "Minggu",
+    };
+
+    if (result.rows.length > 0) {
+      const nextSchedule = result.rows[0];
+      res.json({
+        success: true,
+        schedule: {
+          title: nextSchedule.title,
+          time: `${nextSchedule.jam_mulai.slice(
+            0,
+            5
+          )} - ${nextSchedule.jam_selesai.slice(0, 5)}`,
+          description: nextSchedule.description,
+          type: nextSchedule.type,
+          day: hariMapping[nextSchedule.hari],
+        },
+      });
+    } else {
+      res.json({
+        success: true,
+        schedule: null,
+      });
+    }
+  } catch (error) {
+    console.error("Error in getUpcomingSchedule:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   generateSchedule,
   getJadwalMingguan,
   getLastFormInput,
+  getUpcomingSchedule,
 };
