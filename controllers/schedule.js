@@ -488,10 +488,10 @@ const getUpcomingSchedule = async (req, res) => {
     const currentDay = currentTime.toLocaleString("en-US", { weekday: "long" });
     const currentTimeStr = currentTime.toTimeString().slice(0, 5);
 
-    // console.log("Debug Info:");
-    // console.log("User ID:", req.user.id);
-    // console.log("Current Day:", currentDay);
-    // console.log("Current Time:", currentTimeStr);
+    console.log("Debug Info:");
+    console.log("User ID:", req.user.id);
+    console.log("Current Day:", currentDay);
+    console.log("Current Time:", currentTimeStr);
 
     const result = await pool.query(
       `SELECT 
