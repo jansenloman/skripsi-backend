@@ -14,7 +14,7 @@ app.use(
   cors({
     origin: [
       "http://localhost:5173", // untuk development
-      `https://skripsi-backend-production-a39b.up.railway.app`, // domain frontend setelah deploy
+      `https://skripsi-frontend-production.up.railway.app`, // domain frontend setelah deploy
     ],
     credentials: true,
   })
