@@ -10,7 +10,15 @@ const accountRoutes = require("./routes/accountRoutes");
 const scheduleRoutes = require("./routes/scheduleRoutes");
 const profileRoutes = require("./routes/profileRoutes");
 
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173", // untuk development
+      `https://${process.env.FRONTEND_URL}`, // domain frontend setelah deploy
+    ],
+    credentials: true,
+  })
+);
 app.use(bodyParser.json());
 
 // Test email connection on startup
