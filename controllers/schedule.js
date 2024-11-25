@@ -513,7 +513,7 @@ const getUpcomingSchedule = async (req, res) => {
       INNER JOIN task t ON j.schedule_id = t.schedule_id
       WHERE j.user_id = $1
       AND j.hari = $2
-      AND t.jam_selesai > $3
+      AND t.jam_mulai > $3
       AND t.type != 'background'
       AND t.type != 'free'
       AND (
