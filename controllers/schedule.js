@@ -432,27 +432,10 @@ const getUpcomingSchedule = async (req, res) => {
     );
 
     // Debug logs
-    console.log("Debug Info:");
-    console.log("Current Time Info:", timeResult.rows[0]);
-    console.log("User ID:", req.user.id);
-    console.log("Query result:", result.rows);
-
-    // Query untuk semua jadwal hari ini
-    const allTodaySchedules = await pool.query(
-      `SELECT 
-        j.hari, 
-        t.deskripsi, 
-        t.jam_mulai,
-        EXTRACT(HOUR FROM t.jam_mulai) * 60 + EXTRACT(MINUTE FROM t.jam_mulai) as start_minutes,
-        $2 as current_minutes
-       FROM jadwal j
-       INNER JOIN task t ON j.schedule_id = t.schedule_id
-       WHERE j.user_id = $1
-       AND j.hari = INITCAP(to_char((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::DATE, 'Day'))
-       ORDER BY t.jam_mulai`,
-      [req.user.id, currentMinutes]
-    );
-    console.log("All Today's Schedules:", allTodaySchedules.rows);
+    // console.log("Debug Info:");
+    // console.log("Current Time Info:", timeResult.rows[0]);
+    // console.log("User ID:", req.user.id);
+    // console.log("Query result:", result.rows);
 
     if (result.rows.length > 0) {
       // Map semua jadwal yang ditemukan
