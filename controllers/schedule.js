@@ -492,9 +492,19 @@ const getLastFormInput = async (req, res) => {
 
 const getUpcomingSchedule = async (req, res) => {
   try {
-    const currentTime = new Date();
-    const currentDay = currentTime.toLocaleString("en-US", { weekday: "long" });
-    const currentTimeStr = currentTime.toTimeString().slice(0, 5);
+    // Set timezone ke Asia/Jakarta
+    const currentTime = new Date().toLocaleString("en-US", {
+      timeZone: "Asia/Jakarta",
+    });
+    const jakartaTime = new Date(currentTime);
+
+    const currentDay = jakartaTime.toLocaleString("en-US", { weekday: "long" });
+    const currentTimeStr = jakartaTime.toLocaleString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Jakarta",
+    });
 
     console.log("Debug Info:");
     console.log("User ID:", req.user.id);
