@@ -394,7 +394,7 @@ const getUpcomingSchedule = async (req, res) => {
       `WITH current_time_jakarta AS (
         SELECT 
           (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME as time,
-          to_char((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::DATE, 'Day') as day,
+          TRIM(to_char((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::DATE, 'Day')) as day,
           $2::integer as current_minutes
       ),
       filtered_tasks AS (
@@ -410,7 +410,7 @@ const getUpcomingSchedule = async (req, res) => {
         INNER JOIN task t ON j.schedule_id = t.schedule_id
         CROSS JOIN current_time_jakarta ct
         WHERE j.user_id = $1
-        AND j.hari = INITCAP(ct.day)
+        AND j.hari = ct.day
         AND t.type != 'background'
         AND t.type != 'free'
         AND (
