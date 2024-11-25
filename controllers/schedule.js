@@ -18,6 +18,7 @@ const {
   formatJadwalKuliah,
   formatJadwalMendatang,
 } = require("../utils/scheduleHelper");
+const { formatTime } = require("../utils/dateTimeHelper");
 
 const model = "gpt-4o";
 
