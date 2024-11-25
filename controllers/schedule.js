@@ -463,7 +463,7 @@ const getUpcomingSchedule = async (req, res) => {
         )}`,
         description: schedule.description,
         type: schedule.type,
-        day: HARI_MAPPING[schedule.hari],
+        day: hariMapping[schedule.hari],
       }));
 
       res.json({
