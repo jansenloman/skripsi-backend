@@ -30,3 +30,8 @@ const hariDefault = [
   "Sabtu",
   "Minggu",
 ];
+module.exports = {
+  hariDefault,
+  hariMapping,
+  hariMappingReverse,
+};
