@@ -501,28 +501,38 @@ const getUpcomingSchedule = async (req, res) => {
     console.log("Current Day:", currentDay);
     console.log("Current Time:", currentTimeStr);
 
+    // Konversi waktu saat ini ke menit untuk perbandingan
+    const [currentHour, currentMinute] = currentTimeStr.split(":");
+    const currentTotalMinutes =
+      parseInt(currentHour) * 60 + parseInt(currentMinute);
+
     const result = await pool.query(
-      `SELECT 
-        j.hari,
-        t.deskripsi as title,
-        t.jam_mulai,
-        t.jam_selesai,
-        t.type,
-        t.suggestions as description
-      FROM jadwal j
-      INNER JOIN task t ON j.schedule_id = t.schedule_id
-      WHERE j.user_id = $1
-      AND j.hari = $2
-      AND t.jam_mulai > $3
-      AND t.type != 'background'
-      AND t.type != 'free'
-      AND (
-        t.type = 'fixed'
-        OR t.type = 'basic'
+      `WITH filtered_tasks AS (
+        SELECT 
+          j.hari,
+          t.deskripsi as title,
+          t.jam_mulai,
+          t.jam_selesai,
+          t.type,
+          t.suggestions as description,
+          (EXTRACT(HOUR FROM t.jam_mulai) * 60 + EXTRACT(MINUTE FROM t.jam_mulai)) as start_minutes
+        FROM jadwal j
+        INNER JOIN task t ON j.schedule_id = t.schedule_id
+        WHERE j.user_id = $1
+        AND j.hari = $2
+        AND t.type != 'background'
+        AND t.type != 'free'
+        AND (
+          t.type = 'fixed' 
+          OR t.type = 'basic'
+        )
       )
-      ORDER BY t.jam_mulai
+      SELECT *
+      FROM filtered_tasks
+      WHERE start_minutes > $3
+      ORDER BY start_minutes
       LIMIT 1`,
-      [req.user.id, currentDay, currentTimeStr]
+      [req.user.id, currentDay, currentTotalMinutes]
     );
 
     // Mapping hari untuk response
@@ -538,38 +548,19 @@ const getUpcomingSchedule = async (req, res) => {
 
     if (result.rows.length > 0) {
       const nextSchedule = result.rows[0];
-
-      // Tambahan pengecekan waktu selesai
-      const currentTimeParts = currentTimeStr.split(":");
-      const currentMinutes =
-        parseInt(currentTimeParts[0]) * 60 + parseInt(currentTimeParts[1]);
-
-      const scheduleEndParts = nextSchedule.jam_selesai.slice(0, 5).split(":");
-      const scheduleEndMinutes =
-        parseInt(scheduleEndParts[0]) * 60 + parseInt(scheduleEndParts[1]);
-
-      // Hanya kirim jadwal jika belum selesai
-      if (currentMinutes < scheduleEndMinutes) {
-        res.json({
-          success: true,
-          schedule: {
-            title: nextSchedule.title,
-            time: `${nextSchedule.jam_mulai.slice(
-              0,
-              5
-            )} - ${nextSchedule.jam_selesai.slice(0, 5)}`,
-            description: nextSchedule.description,
-            type: nextSchedule.type,
-            day: hariMapping[nextSchedule.hari],
-          },
-        });
-      } else {
-        // Jika jadwal sudah selesai, kirim null
-        res.json({
-          success: true,
-          schedule: null,
-        });
-      }
+      res.json({
+        success: true,
+        schedule: {
+          title: nextSchedule.title,
+          time: `${nextSchedule.jam_mulai.slice(
+            0,
+            5
+          )} - ${nextSchedule.jam_selesai.slice(0, 5)}`,
+          description: nextSchedule.description,
+          type: nextSchedule.type,
+          day: hariMapping[nextSchedule.hari],
+        },
+      });
     } else {
       res.json({
         success: true,
