@@ -378,15 +378,32 @@ const getLastFormInput = async (req, res) => {
 
 const getUpcomingSchedule = async (req, res) => {
   try {
+    // Set timezone ke Asia/Jakarta
+    const currentTime = new Date().toLocaleString("en-US", {
+      timeZone: "Asia/Jakarta",
+    });
+    const jakartaTime = new Date(currentTime);
+
+    const currentDay = jakartaTime.toLocaleString("en-US", { weekday: "long" });
+    const currentTimeStr = jakartaTime.toLocaleString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Jakarta",
+    });
+
+    console.log("Debug Info:");
+    console.log("User ID:", req.user.id);
+    console.log("Current Day:", currentDay);
+    console.log("Current Time:", currentTimeStr);
+
+    // Konversi waktu saat ini ke menit untuk perbandingan
+    const [currentHour, currentMinute] = currentTimeStr.split(":");
+    const currentTotalMinutes =
+      parseInt(currentHour) * 60 + parseInt(currentMinute);
+
     const result = await pool.query(
-      `WITH current_time_jakarta AS (
-        SELECT 
-          (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME as time,
-          to_char((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::DATE, 'Day') as day,
-          EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME) * 60 + 
-          EXTRACT(MINUTE FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME) as current_minutes
-      ),
-      filtered_tasks AS (
+      `WITH filtered_tasks AS (
         SELECT 
           j.hari,
           t.deskripsi as title,
@@ -397,9 +414,8 @@ const getUpcomingSchedule = async (req, res) => {
           (EXTRACT(HOUR FROM t.jam_mulai) * 60 + EXTRACT(MINUTE FROM t.jam_mulai)) as start_minutes
         FROM jadwal j
         INNER JOIN task t ON j.schedule_id = t.schedule_id
-        CROSS JOIN current_time_jakarta ct
         WHERE j.user_id = $1
-        AND j.hari = INITCAP(ct.day)
+        AND j.hari = $2
         AND t.type != 'background'
         AND t.type != 'free'
         AND (
@@ -407,42 +423,33 @@ const getUpcomingSchedule = async (req, res) => {
           OR t.type = 'basic'
         )
       )
-      SELECT 
-        ft.*,
-        ct.time as current_time,
-        ct.day as current_day
-      FROM filtered_tasks ft
-      CROSS JOIN current_time_jakarta ct
-      WHERE ft.start_minutes > ct.current_minutes
-      ORDER BY ft.start_minutes
-      LIMIT 2`, // Ubah limit menjadi 2
-      [req.user.id]
+      SELECT *
+      FROM filtered_tasks
+      WHERE start_minutes > $3
+      ORDER BY start_minutes
+      LIMIT 2`,
+      [req.user.id, currentDay, currentTotalMinutes]
     );
 
-    console.log("Debug Info:");
-    console.log("User ID:", req.user.id);
-    console.log("Query result:", result.rows);
-
     if (result.rows.length > 0) {
-      // Map semua jadwal yang ditemukan
-      const schedules = result.rows.map((schedule) => ({
-        title: schedule.title,
-        time: `${formatTime(schedule.jam_mulai)} - ${formatTime(
-          schedule.jam_selesai
-        )}`,
-        description: schedule.description,
-        type: schedule.type,
-        day: HARI_MAPPING[schedule.hari],
-      }));
-
+      const nextSchedule = result.rows[0];
       res.json({
         success: true,
-        schedules: schedules, // Kirim array jadwal
+        schedule: {
+          title: nextSchedule.title,
+          time: `${nextSchedule.jam_mulai.slice(
+            0,
+            5
+          )} - ${nextSchedule.jam_selesai.slice(0, 5)}`,
+          description: nextSchedule.description,
+          type: nextSchedule.type,
+          day: hariMapping[nextSchedule.hari],
+        },
       });
     } else {
       res.json({
         success: true,
-        schedules: [], // Kirim array kosong jika tidak ada jadwal
+        schedule: null,
       });
     }
   } catch (error) {
