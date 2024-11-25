@@ -294,7 +294,7 @@ const generateSchedule = async (req, res) => {
               {
                 "task": "string (deskripsi aktivitas)",
                 "time": "HH:mm - HH:mm (format 24 jam)",
-                "type": "fixed|basic|free",
+                "type": "fixed|basic|free|background",
                 "suggestions": "string (wajib diisi untuk type free, berikan 2-3 opsi yang relevan)"
               }
             ]
@@ -541,7 +541,7 @@ const getUpcomingSchedule = async (req, res) => {
       FROM filtered_tasks
       WHERE start_minutes > $3
       ORDER BY start_minutes
-      LIMIT 1`,
+      LIMIT 2`,
       [req.user.id, currentDay, currentTotalMinutes]
     );
 
