@@ -378,13 +378,24 @@ const getLastFormInput = async (req, res) => {
 
 const getUpcomingSchedule = async (req, res) => {
   try {
+    // Query untuk waktu saat ini
+    const timeResult = await pool.query(
+      `SELECT 
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME as current_time,
+        to_char((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::DATE, 'Day') as current_day,
+        EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME) * 60 + 
+        EXTRACT(MINUTE FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME) as current_minutes`
+    );
+
+    const currentMinutes = timeResult.rows[0].current_minutes;
+
+    // Query untuk jadwal
     const result = await pool.query(
       `WITH current_time_jakarta AS (
         SELECT 
           (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME as time,
           to_char((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::DATE, 'Day') as day,
-          EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME) * 60 + 
-          EXTRACT(MINUTE FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME) as current_minutes
+          $2::integer as current_minutes
       ),
       filtered_tasks AS (
         SELECT 
@@ -394,9 +405,7 @@ const getUpcomingSchedule = async (req, res) => {
           t.jam_selesai,
           t.type,
           t.suggestions as description,
-          (EXTRACT(HOUR FROM t.jam_mulai) * 60 + EXTRACT(MINUTE FROM t.jam_mulai)) as start_minutes,
-          (EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME) * 60 + 
-           EXTRACT(MINUTE FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME)) as current_time_minutes
+          (EXTRACT(HOUR FROM t.jam_mulai) * 60 + EXTRACT(MINUTE FROM t.jam_mulai)) as start_minutes
         FROM jadwal j
         INNER JOIN task t ON j.schedule_id = t.schedule_id
         CROSS JOIN current_time_jakarta ct
@@ -415,37 +424,34 @@ const getUpcomingSchedule = async (req, res) => {
         ct.day as current_day
       FROM filtered_tasks ft
       CROSS JOIN current_time_jakarta ct
-      WHERE ft.start_minutes > ft.current_time_minutes
+      WHERE ft.start_minutes > $2
       ORDER BY ft.start_minutes
       LIMIT 2`,
-      [req.user.id]
+      [req.user.id, currentMinutes]
     );
 
-    // Debug logs yang lebih detail
+    // Debug logs
     console.log("Debug Info:");
-    console.log("Current Time Info:", result.rows[0]);
+    console.log("Current Time Info:", timeResult.rows[0]);
     console.log("User ID:", req.user.id);
-    console.log("Query result with time comparison:", result.rows);
+    console.log("Query result:", result.rows);
 
-    // Tambahan query untuk melihat semua jadwal hari ini dengan waktu mulai
+    // Query untuk semua jadwal hari ini
     const allTodaySchedules = await pool.query(
       `SELECT 
         j.hari, 
         t.deskripsi, 
         t.jam_mulai,
         EXTRACT(HOUR FROM t.jam_mulai) * 60 + EXTRACT(MINUTE FROM t.jam_mulai) as start_minutes,
-        ${result.rows[0].current_minutes} as current_minutes
+        $2 as current_minutes
        FROM jadwal j
        INNER JOIN task t ON j.schedule_id = t.schedule_id
        WHERE j.user_id = $1
        AND j.hari = INITCAP(to_char((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::DATE, 'Day'))
        ORDER BY t.jam_mulai`,
-      [req.user.id]
+      [req.user.id, currentMinutes]
     );
-    console.log(
-      "All Today's Schedules with time comparison:",
-      allTodaySchedules.rows
-    );
+    console.log("All Today's Schedules:", allTodaySchedules.rows);
 
     if (result.rows.length > 0) {
       // Map semua jadwal yang ditemukan
