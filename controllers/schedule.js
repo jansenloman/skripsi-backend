@@ -242,22 +242,23 @@ const generateSchedule = async (req, res) => {
       3. Durasi setiap aktivitas tidak boleh melebihi ${
         settings.rows[0]?.durasi_max || 120
       } menit
-      4. Berikan jeda waktu istirahat ${
+      4. Jika ada tugas yang di mention user, tambahkan sebagai saran di setiap waktu luang sampai hari deadline
+      5. Berikan jeda waktu istirahat ${
         settings.rows[0]?.waktu_istirahat || 15
       } menit antar aktivitas
-      5. Berikan kisaran waktu perjalanan antar tempat yang realistis
-      6. Hindari konflik dengan jadwal kuliah dan jadwal mendatang
-      7. Prioritaskan preferensi tambahan dari pengaturan
-      8. PENTING: Jangan membuat jadwal yang tumpang tindih!
+      6. Berikan kisaran waktu perjalanan antar tempat yang realistis
+      7. Hindari konflik dengan jadwal kuliah dan jadwal mendatang
+      8. Prioritaskan preferensi tambahan dari pengaturan
+      9. PENTING: Jangan membuat jadwal yang tumpang tindih!
 
       ATURAN KESEJAHTERAAN PENGGUNA:
-      9. Perhatikan pola aktivitas dan beban mental:
+        10. Perhatikan pola aktivitas dan beban mental:
          - Setelah 2-3 jam aktivitas berat (kuliah/belajar), WAJIB ada istirahat minimal 15-30 menit
          - Setelah aktivitas menguras mental, berikan saran aktivitas refreshing
          - Jangan letakkan terlalu banyak aktivitas berat berturut-turut
          - Sisipkan waktu untuk sosialisasi dan relaksasi
 
-      10. Waktu Luang dan Saran Aktivitas:
+      11. Waktu Luang dan Saran Aktivitas:
           - Untuk waktu luang pendek (< 1 jam): fokus pada aktivitas refreshing atau persiapan
           - Untuk waktu luang medium (1-2 jam): bisa untuk aktivitas produktif ringan atau hobi
           - Untuk waktu luang panjang (> 2 jam): bisa dibagi untuk produktif dan hobi
@@ -267,13 +268,14 @@ const generateSchedule = async (req, res) => {
             * Kebutuhan sosialisasi
             * Hobi dan preferensi pengguna
 
-      11. Fleksibilitas dan Keseimbangan:
+      12. Fleksibilitas dan Keseimbangan:
           - Berikan minimal 2-3 opsi saran untuk setiap waktu luang
           - Sertakan kombinasi aktivitas produktif dan refreshing
           - Untuk waktu malam, prioritaskan aktivitas yang menenangkan
           - Jika ada jadwal padat di siang hari, berikan waktu istirahat yang cukup di malam hari
 
-      12. Format Waktu dan Transisi:
+      13. Format Waktu dan Transisi:
+      PENTING: untuk setiap aktivitas
           - Contoh format jadwal:
             * "Kuliah Pagi (09:00 - 12:00)" [fixed]
             * "Istirahat & Makan Siang (12:00 - 13:00)" [basic]
@@ -281,7 +283,7 @@ const generateSchedule = async (req, res) => {
             * "Perjalanan ke Kampus (14:00 - 14:30)" [basic]
             * "Kuliah Siang (14:30 - 17:00)" [fixed]
       
-      13. Akhiri hari dengan waktu Tidur dan Waktu Bangun yang sudah diatur di pengaturan
+      14. Akhiri hari dengan waktu Tidur dan Waktu Bangun yang sudah diatur di pengaturan
 
       PENTING: Berikan respons HANYA dalam format JSON berikut:
       {
@@ -308,7 +310,13 @@ const generateSchedule = async (req, res) => {
         {
           role: "system",
           content:
-            "Kamu adalah JSON generator yang HANYA menghasilkan output JSON tanpa teks tambahan. Setiap respons HARUS dimulai dengan { dan diakhiri dengan } tanpa karakter tambahan apapun.",
+            "Kamu adalah JSON generator yang HANYA menghasilkan output JSON tanpa teks tambahan. " +
+            "Setiap respons HARUS dimulai dengan { dan diakhiri dengan }. " +
+            "Untuk setiap task, tentukan type sebagai: " +
+            "- 'fixed' untuk kegiatan yang tidak bisa diubah (kuliah, meeting) " +
+            "- 'basic' untuk kegiatan rutin (makan, tidur) " +
+            "- 'free' untuk kegiatan fleksibel (belajar, tugas) " +
+            "- 'background' untuk kegiatan latar belakang yang tidak terlalu signifikan",
         },
         {
           role: "user",
@@ -504,37 +512,15 @@ const getUpcomingSchedule = async (req, res) => {
       FROM jadwal j
       INNER JOIN task t ON j.schedule_id = t.schedule_id
       WHERE j.user_id = $1
-      AND j.hari = $2  -- Hanya ambil jadwal hari ini
-      AND t.jam_mulai > $3  -- Waktu harus lebih besar dari waktu sekarang
+      AND j.hari = $2
+      AND t.jam_selesai > $3
+      AND t.type != 'background'
+      AND t.type != 'free'
       AND (
-        -- Ambil jadwal fixed (kuliah, meeting, dll)
         t.type = 'fixed'
-        OR
-        -- Ambil jadwal free yang penting (belajar, tugas)
-        (t.type = 'free' AND (
-          t.deskripsi ILIKE '%belajar%' OR
-          t.deskripsi ILIKE '%tugas%' OR
-          t.deskripsi ILIKE '%kerja%' OR
-          t.deskripsi ILIKE '%meeting%' OR
-          t.deskripsi ILIKE '%rapat%' OR
-          t.deskripsi ILIKE '%deadline%' OR
-          t.deskripsi ILIKE '%project%' OR
-          t.deskripsi ILIKE '%presentasi%' OR
-          t.deskripsi ILIKE '%ujian%' OR
-          t.deskripsi ILIKE '%kuis%'
-        ))
+        OR t.type = 'basic'
       )
-      ORDER BY 
-        CASE j.hari 
-          WHEN 'Monday' THEN 1
-          WHEN 'Tuesday' THEN 2
-          WHEN 'Wednesday' THEN 3
-          WHEN 'Thursday' THEN 4
-          WHEN 'Friday' THEN 5
-          WHEN 'Saturday' THEN 6
-          WHEN 'Sunday' THEN 7
-        END,
-        t.jam_mulai
+      ORDER BY t.jam_mulai
       LIMIT 1`,
       [req.user.id, currentDay, currentTimeStr]
     );
@@ -552,19 +538,38 @@ const getUpcomingSchedule = async (req, res) => {
 
     if (result.rows.length > 0) {
       const nextSchedule = result.rows[0];
-      res.json({
-        success: true,
-        schedule: {
-          title: nextSchedule.title,
-          time: `${nextSchedule.jam_mulai.slice(
-            0,
-            5
-          )} - ${nextSchedule.jam_selesai.slice(0, 5)}`,
-          description: nextSchedule.description,
-          type: nextSchedule.type,
-          day: hariMapping[nextSchedule.hari],
-        },
-      });
+
+      // Tambahan pengecekan waktu selesai
+      const currentTimeParts = currentTimeStr.split(":");
+      const currentMinutes =
+        parseInt(currentTimeParts[0]) * 60 + parseInt(currentTimeParts[1]);
+
+      const scheduleEndParts = nextSchedule.jam_selesai.slice(0, 5).split(":");
+      const scheduleEndMinutes =
+        parseInt(scheduleEndParts[0]) * 60 + parseInt(scheduleEndParts[1]);
+
+      // Hanya kirim jadwal jika belum selesai
+      if (currentMinutes < scheduleEndMinutes) {
+        res.json({
+          success: true,
+          schedule: {
+            title: nextSchedule.title,
+            time: `${nextSchedule.jam_mulai.slice(
+              0,
+              5
+            )} - ${nextSchedule.jam_selesai.slice(0, 5)}`,
+            description: nextSchedule.description,
+            type: nextSchedule.type,
+            day: hariMapping[nextSchedule.hari],
+          },
+        });
+      } else {
+        // Jika jadwal sudah selesai, kirim null
+        res.json({
+          success: true,
+          schedule: null,
+        });
+      }
     } else {
       res.json({
         success: true,
