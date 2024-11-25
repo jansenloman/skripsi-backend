@@ -1,49 +1,25 @@
 const openai = require("../config/openai");
 const pool = require("../config/database");
 const { getProfileData } = require("./profile");
-const { formatDate, formatTime } = require("../utils/dateTimeHelper");
+const {
+  hariMappingReverse,
+  hariMapping,
+  hariDefault,
+} = require("../utils/constant");
+
+const {
+  getJadwalKuliahData,
+  getJadwalMendatangData,
+} = require("../utils/scheduleHelper");
+
+const {
+  formatSettings,
+  formatProfileData,
+  formatJadwalKuliah,
+  formatJadwalMendatang,
+} = require("../utils/scheduleHelper");
 
 const model = "gpt-4o";
-
-// Tambahkan fungsi helper untuk mengambil data jadwal
-const getJadwalKuliahData = async (userId) => {
-  try {
-    const result = await pool.query(
-      `SELECT * FROM jadwal_kuliah 
-       WHERE user_id = $1 
-       ORDER BY 
-         CASE hari 
-           WHEN 'Senin' THEN 1 
-           WHEN 'Selasa' THEN 2 
-           WHEN 'Rabu' THEN 3 
-           WHEN 'Kamis' THEN 4 
-           WHEN 'Jumat' THEN 5 
-           WHEN 'Sabtu' THEN 6 
-           WHEN 'Minggu' THEN 7 
-         END,
-         jam_mulai`,
-      [userId]
-    );
-    return result.rows;
-  } catch (error) {
-    throw error;
-  }
-};
-
-const getJadwalMendatangData = async (userId) => {
-  try {
-    const result = await pool.query(
-      `SELECT * FROM jadwal_mendatang 
-       WHERE user_id = $1 
-       AND tanggal >= CURRENT_DATE 
-       ORDER BY tanggal, jam_mulai`,
-      [userId]
-    );
-    return result.rows;
-  } catch (error) {
-    throw error;
-  }
-};
 
 // Get jadwal mingguan
 const getJadwalMingguan = async (req, res) => {
@@ -74,28 +50,6 @@ const getJadwalMingguan = async (req, res) => {
 
     // Debug: Log raw query result
     // console.log("Raw query result:", result.rows);
-
-    // Mapping hari Inggris ke Indonesia
-    const hariMapping = {
-      Monday: "Senin",
-      Tuesday: "Selasa",
-      Wednesday: "Rabu",
-      Thursday: "Kamis",
-      Friday: "Jumat",
-      Saturday: "Sabtu",
-      Sunday: "Minggu",
-    };
-
-    // Daftar hari dalam seminggu
-    const hariDefault = [
-      "Senin",
-      "Selasa",
-      "Rabu",
-      "Kamis",
-      "Jumat",
-      "Sabtu",
-      "Minggu",
-    ];
 
     // Format data dengan memastikan semua hari ada
     const formattedSchedule = hariDefault.reduce((acc, hari) => {
@@ -179,17 +133,6 @@ const cleanJSONResponse = (response) => {
   } catch (error) {
     throw new Error(`Failed to clean JSON response: ${error.message}`);
   }
-};
-
-// Mapping hari di level global
-const hariMappingReverse = {
-  Senin: "Monday",
-  Selasa: "Tuesday",
-  Rabu: "Wednesday",
-  Kamis: "Thursday",
-  Jumat: "Friday",
-  Sabtu: "Saturday",
-  Minggu: "Sunday",
 };
 
 // Generate schedule from OpenAI
@@ -402,63 +345,6 @@ const generateSchedule = async (req, res) => {
   }
 };
 
-// Tambahkan fungsi helper untuk format settings
-const formatSettings = (settings) => {
-  if (!settings.rows[0]) return "Tidak ada pengaturan jadwal";
-
-  const s = settings.rows[0];
-  return `
-    Waktu Bangun: ${formatTime(s.wake_time)}
-    Waktu Tidur: ${formatTime(s.sleep_time)}
-    
-    Waktu Makan:
-    - Sarapan: ${formatTime(s.breakfast_time)} (${s.breakfast_duration} menit)
-    - Makan Siang: ${formatTime(s.lunch_time)} (${s.lunch_duration} menit)
-    - Makan Malam: ${formatTime(s.dinner_time)} (${s.dinner_duration} menit)
-    
-    Waktu Istirahat: ${formatTime(s.rest_time)} (${s.rest_duration} menit)
-    
-    Waktu Produktif:
-    - Mulai: ${formatTime(s.productive_time_start)}
-    - Selesai: ${formatTime(s.productive_time_end)}
-  `.trim();
-};
-
-// Pastikan semua fungsi format sudah ada
-const formatProfileData = (profile) => {
-  if (!profile) return "Tidak ada data profil";
-  return `
-    Nama: ${profile.name || "Tidak diisi"}
-    Hobi: ${profile.hobby || "Tidak diisi"}
-    Kegiatan Harian: ${profile.daily_task || "Tidak diisi"}
-    Detail Lain: ${profile.other_details || "Tidak diisi"}
-  `.trim();
-};
-
-const formatJadwalKuliah = (jadwalKuliah) => {
-  if (!jadwalKuliah.length) return "Tidak ada jadwal kuliah";
-  return jadwalKuliah
-    .map(
-      (jk) =>
-        `- ${jk.hari}: ${jk.mata_kuliah} (${formatTime(
-          jk.jam_mulai
-        )} - ${formatTime(jk.jam_selesai)})`
-    )
-    .join("\n");
-};
-
-const formatJadwalMendatang = (jadwalMendatang) => {
-  if (!jadwalMendatang.length) return "Tidak ada jadwal mendatang";
-  return jadwalMendatang
-    .map(
-      (jm) =>
-        `- ${formatDate(jm.tanggal)}: ${jm.kegiatan} (${formatTime(
-          jm.jam_mulai
-        )} - ${formatTime(jm.jam_selesai)})`
-    )
-    .join("\n");
-};
-
 // Get last form input
 const getLastFormInput = async (req, res) => {
   try {
@@ -492,32 +378,15 @@ const getLastFormInput = async (req, res) => {
 
 const getUpcomingSchedule = async (req, res) => {
   try {
-    // Set timezone ke Asia/Jakarta
-    const currentTime = new Date().toLocaleString("en-US", {
-      timeZone: "Asia/Jakarta",
-    });
-    const jakartaTime = new Date(currentTime);
-
-    const currentDay = jakartaTime.toLocaleString("en-US", { weekday: "long" });
-    const currentTimeStr = jakartaTime.toLocaleString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-      timeZone: "Asia/Jakarta",
-    });
-
-    console.log("Debug Info:");
-    console.log("User ID:", req.user.id);
-    console.log("Current Day:", currentDay);
-    console.log("Current Time:", currentTimeStr);
-
-    // Konversi waktu saat ini ke menit untuk perbandingan
-    const [currentHour, currentMinute] = currentTimeStr.split(":");
-    const currentTotalMinutes =
-      parseInt(currentHour) * 60 + parseInt(currentMinute);
-
     const result = await pool.query(
-      `WITH filtered_tasks AS (
+      `WITH current_time_jakarta AS (
+        SELECT 
+          (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME as time,
+          to_char((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::DATE, 'Day') as day,
+          EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME) * 60 + 
+          EXTRACT(MINUTE FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME) as current_minutes
+      ),
+      filtered_tasks AS (
         SELECT 
           j.hari,
           t.deskripsi as title,
@@ -528,8 +397,9 @@ const getUpcomingSchedule = async (req, res) => {
           (EXTRACT(HOUR FROM t.jam_mulai) * 60 + EXTRACT(MINUTE FROM t.jam_mulai)) as start_minutes
         FROM jadwal j
         INNER JOIN task t ON j.schedule_id = t.schedule_id
+        CROSS JOIN current_time_jakarta ct
         WHERE j.user_id = $1
-        AND j.hari = $2
+        AND j.hari = INITCAP(ct.day)
         AND t.type != 'background'
         AND t.type != 'free'
         AND (
@@ -537,44 +407,42 @@ const getUpcomingSchedule = async (req, res) => {
           OR t.type = 'basic'
         )
       )
-      SELECT *
-      FROM filtered_tasks
-      WHERE start_minutes > $3
-      ORDER BY start_minutes
-      LIMIT 2`,
-      [req.user.id, currentDay, currentTotalMinutes]
+      SELECT 
+        ft.*,
+        ct.time as current_time,
+        ct.day as current_day
+      FROM filtered_tasks ft
+      CROSS JOIN current_time_jakarta ct
+      WHERE ft.start_minutes > ct.current_minutes
+      ORDER BY ft.start_minutes
+      LIMIT 2`, // Ubah limit menjadi 2
+      [req.user.id]
     );
 
-    // Mapping hari untuk response
-    const hariMapping = {
-      Monday: "Senin",
-      Tuesday: "Selasa",
-      Wednesday: "Rabu",
-      Thursday: "Kamis",
-      Friday: "Jumat",
-      Saturday: "Sabtu",
-      Sunday: "Minggu",
-    };
+    console.log("Debug Info:");
+    console.log("User ID:", req.user.id);
+    console.log("Query result:", result.rows);
 
     if (result.rows.length > 0) {
-      const nextSchedule = result.rows[0];
+      // Map semua jadwal yang ditemukan
+      const schedules = result.rows.map((schedule) => ({
+        title: schedule.title,
+        time: `${formatTime(schedule.jam_mulai)} - ${formatTime(
+          schedule.jam_selesai
+        )}`,
+        description: schedule.description,
+        type: schedule.type,
+        day: HARI_MAPPING[schedule.hari],
+      }));
+
       res.json({
         success: true,
-        schedule: {
-          title: nextSchedule.title,
-          time: `${nextSchedule.jam_mulai.slice(
-            0,
-            5
-          )} - ${nextSchedule.jam_selesai.slice(0, 5)}`,
-          description: nextSchedule.description,
-          type: nextSchedule.type,
-          day: hariMapping[nextSchedule.hari],
-        },
+        schedules: schedules, // Kirim array jadwal
       });
     } else {
       res.json({
         success: true,
-        schedule: null,
+        schedules: [], // Kirim array kosong jika tidak ada jadwal
       });
     }
   } catch (error) {

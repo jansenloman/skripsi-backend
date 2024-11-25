@@ -25,11 +25,11 @@ const validateDateTime = (tanggal, jamMulai) => {
 // Get jadwal mendatang (yang belum lewat)
 const getJadwalMendatang = async (req, res) => {
   try {
-    const currentDate = new Date();
-    const currentTime = currentDate.toLocaleTimeString("id-ID", {
-      hour12: false,
-      timeZone: "Asia/Jakarta",
-    });
+    // const currentDate = new Date();
+    // const currentTime = currentDate.toLocaleTimeString("id-ID", {
+    //   hour12: false,
+    //   timeZone: "Asia/Jakarta",
+    // });
     // console.log("Current DateTime:", currentDate.toISOString());
     // console.log("Current Time (WIB):", currentTime);
 
