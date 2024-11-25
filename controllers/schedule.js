@@ -404,7 +404,9 @@ const getUpcomingSchedule = async (req, res) => {
           t.jam_selesai,
           t.type,
           t.suggestions as description,
-          (EXTRACT(HOUR FROM t.jam_mulai) * 60 + EXTRACT(MINUTE FROM t.jam_mulai)) as start_minutes
+          (EXTRACT(HOUR FROM t.jam_mulai) * 60 + EXTRACT(MINUTE FROM t.jam_mulai)) as start_minutes,
+          (EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME) * 60 + 
+           EXTRACT(MINUTE FROM (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::TIME)) as current_time_minutes
         FROM jadwal j
         INNER JOIN task t ON j.schedule_id = t.schedule_id
         CROSS JOIN current_time_jakarta ct
@@ -423,7 +425,7 @@ const getUpcomingSchedule = async (req, res) => {
         ct.day as current_day
       FROM filtered_tasks ft
       CROSS JOIN current_time_jakarta ct
-      WHERE ft.start_minutes > ct.current_minutes
+      WHERE ft.start_minutes > ft.current_time_minutes
       ORDER BY ft.start_minutes
       LIMIT 2`,
       [req.user.id]
@@ -433,11 +435,16 @@ const getUpcomingSchedule = async (req, res) => {
     console.log("Debug Info:");
     console.log("Current Time Info:", debugResult.rows[0]);
     console.log("User ID:", req.user.id);
-    console.log("Query result:", result.rows);
+    console.log("Query result with time comparison:", result.rows);
 
-    // Tambahan query untuk melihat semua jadwal hari ini
+    // Tambahan query untuk melihat semua jadwal hari ini dengan waktu mulai
     const allTodaySchedules = await pool.query(
-      `SELECT j.hari, t.deskripsi, t.jam_mulai, t.jam_selesai, t.type
+      `SELECT 
+        j.hari, 
+        t.deskripsi, 
+        t.jam_mulai,
+        EXTRACT(HOUR FROM t.jam_mulai) * 60 + EXTRACT(MINUTE FROM t.jam_mulai) as start_minutes,
+        ${debugResult.rows[0].current_minutes} as current_minutes
        FROM jadwal j
        INNER JOIN task t ON j.schedule_id = t.schedule_id
        WHERE j.user_id = $1
@@ -445,7 +452,10 @@ const getUpcomingSchedule = async (req, res) => {
        ORDER BY t.jam_mulai`,
       [req.user.id]
     );
-    console.log("All Today's Schedules:", allTodaySchedules.rows);
+    console.log(
+      "All Today's Schedules with time comparison:",
+      allTodaySchedules.rows
+    );
 
     if (result.rows.length > 0) {
       // Map semua jadwal yang ditemukan
