@@ -5,6 +5,7 @@ const {
   verifyEmail,
   resendVerification,
   checkVerification,
+  changePassword,
 } = require("../controllers/account");
 const {
   getScheduleSettings,
@@ -65,5 +66,8 @@ router.post("/check-verification", checkVerification);
 // Route for settings
 router.get("/settings", authMiddleware, getScheduleSettings);
 router.put("/settings", authMiddleware, updateScheduleSettings);
+
+// Tambahkan di routes
+router.post("/change-password", authMiddleware, changePassword);
 
 module.exports = router;
