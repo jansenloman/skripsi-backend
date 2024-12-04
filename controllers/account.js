@@ -249,7 +249,7 @@ const checkVerification = async (req, res) => {
 // Tambahkan fungsi changePassword
 const changePassword = async (req, res) => {
   const { currentPassword, newPassword } = req.body;
-  const userId = req.user.userId; // from auth middleware
+  const userId = req.user.id;
   const client = await pool.connect();
 
   try {
