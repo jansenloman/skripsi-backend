@@ -55,6 +55,11 @@ const registerOrLoginAccount = async (email, password) => {
         verified: false,
       };
       isNewUser = true;
+    } else {
+      const isValidPassword = await bcrypt.compare(password, user.password);
+      if (!isValidPassword) {
+        throw new Error("Password tidak valid");
+      }
     }
 
     await client.query("COMMIT");
