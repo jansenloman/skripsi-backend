@@ -58,7 +58,7 @@ const registerOrLoginAccount = async (email, password) => {
     } else {
       const isValidPassword = await bcrypt.compare(password, user.password);
       if (!isValidPassword) {
-        throw new Error("Password tidak valid");
+        throw new Error("Password salah, coba periksa kembali");
       }
     }
 
