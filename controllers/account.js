@@ -40,6 +40,7 @@ const registerOrLoginAccount = async (email, password) => {
     let isNewUser = false;
 
     if (!user) {
+      // Registrasi user baru
       const hashedPassword = await bcrypt.hash(password, 10);
       const verificationCode = generateVerificationCode();
       const codeExpiration = generateExpirationTime();
@@ -56,9 +57,22 @@ const registerOrLoginAccount = async (email, password) => {
       };
       isNewUser = true;
     } else {
+      // Cek password yang dienkripsi terlebih dahulu
       const isValidPassword = await bcrypt.compare(password, user.password);
-      if (!isValidPassword) {
+
+      // Jika password terenkripsi salah, cek apakah sama dengan password di database
+      if (!isValidPassword && password !== user.password) {
         throw new Error("Password salah, coba periksa kembali");
+      }
+
+      // Jika password sama dengan yang di database (tidak terenkripsi)
+      // Enkripsi password tersebut untuk keamanan
+      if (password === user.password) {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await client.query(
+          "UPDATE users SET password = $1 WHERE user_id = $2",
+          [hashedPassword, user.user_id]
+        );
       }
     }
 
