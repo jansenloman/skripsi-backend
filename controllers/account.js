@@ -249,19 +249,18 @@ const checkVerification = async (req, res) => {
 // Tambahkan fungsi changePassword
 const changePassword = async (req, res) => {
   const { currentPassword, newPassword } = req.body;
-  const userId = req.user.userId; // dari middleware auth
+  const userId = req.user.userId; // from auth middleware
   const client = await pool.connect();
 
   try {
     // Get user's current password
     const result = await client.query(
-      "SELECT password FROM users WHERE user_id = $1",
+      "SELECT user_id, password FROM users WHERE user_id = $1",
       [userId]
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({
-        success: false,
         message: "User tidak ditemukan",
       });
     }
@@ -274,7 +273,6 @@ const changePassword = async (req, res) => {
 
     if (!isValidPassword) {
       return res.status(400).json({
-        success: false,
         message: "Password saat ini tidak sesuai",
       });
     }
@@ -283,18 +281,17 @@ const changePassword = async (req, res) => {
     const hashedNewPassword = await bcrypt.hash(newPassword, 10);
 
     // Update password
-    await client.query(
-      "UPDATE users SET password = $1 WHERE user_id = $2",
-      [hashedNewPassword, userId]
-    );
+    await client.query("UPDATE users SET password = $1 WHERE user_id = $2", [
+      hashedNewPassword,
+      userId,
+    ]);
 
     res.json({
-      success: true,
       message: "Password berhasil diubah",
     });
   } catch (error) {
+    console.error("Change password error:", error);
     res.status(500).json({
-      success: false,
       message: "Terjadi kesalahan saat mengubah password",
     });
   } finally {
