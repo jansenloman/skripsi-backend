@@ -57,16 +57,16 @@ const registerOrLoginAccount = async (email, password) => {
       };
       isNewUser = true;
     } else {
-      // Cek password yang dienkripsi terlebih dahulu
+      // Cek password yang dienkripsi
       const isValidPassword = await bcrypt.compare(password, user.password);
 
-      // Jika password terenkripsi salah, cek apakah sama dengan password di database
+      // cek password input dengan password di database tanpa enkripsi
       if (!isValidPassword && password !== user.password) {
         throw new Error("Password salah, coba periksa kembali");
       }
 
       // Jika password sama dengan yang di database (tidak terenkripsi)
-      // Enkripsi password tersebut untuk keamanan
+      // Enkripsi password
       if (password === user.password) {
         const hashedPassword = await bcrypt.hash(password, 10);
         await client.query(

@@ -162,7 +162,7 @@ const generateSchedule = async (req, res) => {
     const promptWithContext = `
       Buatkan jadwal mingguan lengkap (full day schedule) berdasarkan data berikut:
 
-      INPUT PENGGUNA:
+      INPUT PENGGUNA (PENTING: INPUT PENGGUNA HARUS DIIKUTI. JIKA DIMINTA UNTUK MENGUBAH, ATAU TIDAK MENGABAIKAN SUATU JADWAL YANG ADA MAKA IKUTI SAJA):
       ${req.body.input}
       
       DETAIL TAMBAHAN:
