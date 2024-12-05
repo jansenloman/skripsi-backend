@@ -412,12 +412,9 @@ const getUpcomingSchedule = async (req, res) => {
         CROSS JOIN current_time_jakarta ct
         WHERE j.user_id = $1
         AND j.hari = ct.day
-        AND t.type != 'background'
-        AND t.type != 'free'
-        AND (
-          t.type = 'fixed' 
-          OR t.type = 'basic'
-        )
+        AND j.hari = ct.day
+        AND t.type IN ('free', 'basic', 'fixed')
+    
       )
       SELECT 
         ft.*,
