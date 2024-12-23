@@ -12,13 +12,30 @@ const profileRoutes = require("./routes/profileRoutes");
 
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173", // untuk development
-      `https://skripsi-frontend-production.up.railway.app`, // domain frontend setelah deploy
-    ],
+    origin: function (origin, callback) {
+      // Allow specific origins and any subdomain of trycloudflare.com
+      const allowedOrigins = [
+        "http://localhost:5173", // for development
+        "https://skripsi-frontend-production.up.railway.app", // production frontend domain
+        /^https:\/\/.*\.trycloudflare\.com$/, // Allow any subdomain of trycloudflare.com
+      ];
+
+      if (
+        allowedOrigins.some((regexOrUrl) =>
+          typeof regexOrUrl === "string"
+            ? origin === regexOrUrl
+            : regexOrUrl.test(origin)
+        )
+      ) {
+        callback(null, true); // Allow the request
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
   })
 );
+
 app.use(bodyParser.json());
 
 // Test email connection on startup
