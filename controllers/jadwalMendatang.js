@@ -280,10 +280,51 @@ const getJadwalMendatangHistory = async (req, res) => {
   }
 };
 
+// Get jadwal mendatang history detail
+const getJadwalMendatangHistoryDetail = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      `SELECT 
+        jm.id,
+        jm.title,
+        jm.description,
+        jm.tanggal,
+        jm.jam_mulai,
+        jm.jam_selesai,
+        jm.created_at,
+        jm.updated_at
+      FROM jadwal_mendatang jm
+      WHERE jm.id = $1 AND jm.user_id = $2`,
+      [id, req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Jadwal tidak ditemukan",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Error in getJadwalMendatangHistoryDetail:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getJadwalMendatang,
   addJadwalMendatang,
   editJadwalMendatang,
   deleteJadwalMendatang,
   getJadwalMendatangHistory,
+  getJadwalMendatangHistoryDetail,
 };
