@@ -31,7 +31,7 @@ const getJadwalMingguan = async (req, res) => {
     const result = await pool.query(
       `SELECT j.schedule_id, j.hari, 
         t.task_id, t.deskripsi, t.jam_mulai, t.jam_selesai, 
-        t.type, t.suggestions
+        t.type, t.suggestions, t.hidden, t.conflicts_with
        FROM jadwal j 
        LEFT JOIN task t ON j.schedule_id = t.schedule_id 
        WHERE j.user_id = $1 
@@ -71,6 +71,8 @@ const getJadwalMingguan = async (req, res) => {
           jam_selesai: row.jam_selesai,
           type: row.type,
           suggestions: row.suggestions,
+          hidden: row.hidden,
+          conflicts_with: row.conflicts_with
         });
       }
     });
@@ -134,6 +136,82 @@ const cleanJSONResponse = (response) => {
   } catch (error) {
     throw new Error(`Failed to clean JSON response: ${error.message}`);
   }
+};
+
+// Detect conflicts between tasks
+const detectTimeConflicts = async (client, userId, tasks) => {
+  // Helper function to convert time to minutes for comparison
+  const toMinutes = (timeStr) => {
+    const [hours, minutes] = timeStr.trim().split(':').map(Number);
+    return hours * 60 + minutes;
+  };
+
+  // Helper function to check if two time ranges overlap
+  const isOverlapping = (time1, time2) => {
+    const [start1, end1] = time1.split('-').map(t => toMinutes(t.trim()));
+    const [start2, end2] = time2.split('-').map(t => toMinutes(t.trim()));
+
+    // Check if one range starts during the other range
+    // We consider times exactly at the boundary (e.g., 12:00-13:00 and 13:00-14:00) as non-overlapping
+    return (start1 < end2 && start2 < end1);
+  };
+
+  // Group tasks by day for more efficient processing
+  const tasksByDay = {};
+  tasks.forEach(task => {
+    if (!tasksByDay[task.day]) {
+      tasksByDay[task.day] = [];
+    }
+    tasksByDay[task.day].push({
+      ...task,
+      timeRange: task.time.replace(' - ', '-') // Normalize time format
+    });
+  });
+
+  // Store conflicts with a more reliable structure
+  const conflicts = new Map();
+
+  // Check conflicts for each day
+  Object.entries(tasksByDay).forEach(([day, dayTasks]) => {
+    // Compare each task with every other task in the same day
+    for (let i = 0; i < dayTasks.length; i++) {
+      const task1 = dayTasks[i];
+      
+      for (let j = i + 1; j < dayTasks.length; j++) {
+        const task2 = dayTasks[j];
+
+        if (isOverlapping(task1.timeRange, task2.timeRange)) {
+          // Create unique keys for both tasks
+          const key1 = `${task1.task}_${task1.time}`;
+          const key2 = `${task2.task}_${task2.time}`;
+
+          // Add task1's conflict
+          if (!conflicts.has(key1)) {
+            conflicts.set(key1, {
+              task: task1,
+              conflicts: new Set()
+            });
+          }
+          conflicts.get(key1).conflicts.add(task2);
+
+          // Add task2's conflict
+          if (!conflicts.has(key2)) {
+            conflicts.set(key2, {
+              task: task2,
+              conflicts: new Set()
+            });
+          }
+          conflicts.get(key2).conflicts.add(task1);
+        }
+      }
+    }
+  });
+
+  // Convert Map and Sets to arrays for the return value
+  return Array.from(conflicts.values()).map(({ task, conflicts }) => ({
+    task,
+    conflicts: Array.from(conflicts)
+  }));
 };
 
 // Generate schedule from OpenAI
@@ -246,7 +324,11 @@ const generateSchedule = async (req, res) => {
         ]
       }
 
-      Pastikan tidak ada jadwal yang tumpang tindih dan setiap aktivitas panjang dibagi menjadi beberapa sesi dengan istirahat yang jelas.
+      Aturan type:
+      - 'fixed': kegiatan yang tidak bisa diubah (kuliah, meeting)
+      - 'basic': kegiatan rutin (makan, tidur)
+      - 'free': kegiatan fleksibel (belajar, tugas)
+      - 'background': kegiatan latar belakang yang tidak terlalu signifikan
     `;
 
     const completion = await openai.chat.completions.create({
@@ -274,12 +356,45 @@ const generateSchedule = async (req, res) => {
 
     const rawResponse = completion.choices[0].message.content;
     const generatedSchedule = cleanJSONResponse(rawResponse);
+    console.log("Generated Schedule:", generatedSchedule.schedule);
 
-    // 4. Simpan ke generated_schedules
+    // Check for conflicts
+    const allTasks = generatedSchedule.schedule.flatMap(day => 
+      day.daily.map(task => ({
+        ...task,
+        day: day.day
+      }))
+    );
+    
+    const conflicts = await detectTimeConflicts(client, req.user.id, allTasks);
+    
+    // Create a copy of schedule for display with conflict marks
+    const displaySchedule = {
+      schedule: generatedSchedule.schedule.map(day => ({
+        ...day,
+        daily: day.daily.map(task => {
+          const conflict = conflicts.find(c => 
+            c.task.task === task.task && 
+            c.task.time === task.time
+          );
+          
+          if (conflict) {
+            return {
+              ...task,
+              type: 'conflict',
+              conflictingTasks: conflict.conflicts
+            };
+          }
+          return task;
+        })
+      }))
+    };
+
+    // 4. Simpan ke generated_schedules dengan schedule yang sudah ditandai konflik
     await client.query(
       `INSERT INTO generated_schedules (user_id, form_input_id, schedule_data)
        VALUES ($1, $2, $3)`,
-      [req.user.id, formInputId, generatedSchedule]
+      [req.user.id, formInputId, displaySchedule]
     );
 
     // 5. Hapus jadwal lama jika ada
@@ -292,10 +407,8 @@ const generateSchedule = async (req, res) => {
     );
     await client.query("DELETE FROM jadwal WHERE user_id = $1", [req.user.id]);
 
-    // 6. Simpan jadwal baru
+    // 6. Simpan jadwal baru menggunakan data asli
     for (const day of generatedSchedule.schedule) {
-      // console.log("Saving day:", day);
-
       const jadwalResult = await client.query(
         "INSERT INTO jadwal (user_id, hari, form_input_id) VALUES ($1, $2, $3) RETURNING schedule_id",
         [req.user.id, hariMappingReverse[day.day], formInputId]
@@ -306,6 +419,13 @@ const generateSchedule = async (req, res) => {
       // Simpan tasks dengan type dan suggestions
       for (const task of day.daily) {
         const [jamMulai, jamSelesai] = task.time.split(" - ");
+        
+        // Check if this task has conflicts
+        const conflict = conflicts.find(c => 
+          c.task.task === task.task && 
+          c.task.time === task.time
+        );
+        // console.log(conflict);
 
         await client.query(
           `INSERT INTO task (
@@ -314,15 +434,19 @@ const generateSchedule = async (req, res) => {
             jam_mulai, 
             jam_selesai, 
             type, 
-            suggestions
-          ) VALUES ($1, $2, $3, $4, $5, $6)`,
+            suggestions,
+            conflicts_with,
+            hidden
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
             scheduleId,
             task.task,
             jamMulai,
             jamSelesai,
-            task.type || "basic",
+            conflict ? 'conflict' : (task.type || "basic"),
             task.suggestions || null,
+            conflict ? conflict.conflicts.map(t => t.task_id) : null,
+            false // Initially not hidden
           ]
         );
       }
@@ -332,7 +456,7 @@ const generateSchedule = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      schedule: generatedSchedule.schedule,
+      schedule: displaySchedule.schedule // Return the display version with conflict marks
     });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -465,9 +589,173 @@ const getUpcomingSchedule = async (req, res) => {
   }
 };
 
+// Resolve schedule conflict
+const resolveConflict = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    const { taskId } = req.body;
+
+    // Get the selected task and its conflicts
+    const taskResult = await client.query(
+      `SELECT t.*, j.user_id 
+       FROM task t 
+       JOIN jadwal j ON t.schedule_id = j.schedule_id 
+       WHERE t.task_id = $1`,
+      [taskId]
+    );
+
+    if (taskResult.rows.length === 0) {
+      throw new Error('Task not found');
+    }
+
+    const task = taskResult.rows[0];
+
+    // Check if user owns this task
+    if (task.user_id !== req.user.id) {
+      throw new Error('Unauthorized');
+    }
+
+    // Delete conflicting tasks
+    if (task.conflicts_with && task.conflicts_with.length > 0) {
+      await client.query(
+        `DELETE FROM task 
+         WHERE task_id = ANY($1)`,
+        [task.conflicts_with]
+      );
+    }
+
+    // Update the selected task to remove conflict status
+    await client.query(
+      `UPDATE task 
+       SET type = 'fixed', 
+           conflicts_with = NULL 
+       WHERE task_id = $1`,
+      [taskId]
+    );
+
+    await client.query('COMMIT');
+
+    res.status(200).json({
+      success: true,
+      message: 'Conflict resolved successfully'
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error in resolveConflict:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+};
+
+// Toggle task visibility
+const toggleTaskVisibility = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    const { taskId } = req.params;
+    const { hidden } = req.body;
+
+    // Update task visibility with user_id check through jadwal table
+    const result = await client.query(
+      `UPDATE task t 
+       SET hidden = $1 
+       FROM jadwal j 
+       WHERE t.task_id = $2 
+       AND t.schedule_id = j.schedule_id 
+       AND j.user_id = $3
+       RETURNING t.*`,
+      [hidden, taskId, req.user.id]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error('Task not found or unauthorized');
+    }
+
+    // If we're showing this task, hide its conflicting tasks
+    if (!hidden && result.rows[0].conflicts_with && result.rows[0].conflicts_with.length > 0) {
+      await client.query(
+        `UPDATE task t 
+         SET hidden = true 
+         FROM jadwal j 
+         WHERE t.task_id = ANY($1) 
+         AND t.schedule_id = j.schedule_id 
+         AND j.user_id = $2`,
+        [result.rows[0].conflicts_with, req.user.id]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    res.status(200).json({
+      success: true,
+      message: 'Task visibility updated successfully'
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error in toggleTaskVisibility:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    client.release();
+  }
+};
+
+// Delete a task
+const deleteTask = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { taskId } = req.params;
+
+    // First check if task exists
+    const taskCheck = await client.query(
+      'SELECT * FROM task WHERE task_id = $1',
+      [taskId]
+    );
+
+    if (taskCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Task tidak ditemukan'
+      });
+    }
+
+    // Delete task
+    await client.query(
+      'DELETE FROM task WHERE task_id = $1',
+      [taskId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Task berhasil dihapus'
+    });
+
+  } catch (error) {
+    console.error('Error deleting task:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Terjadi kesalahan saat menghapus task'
+    });
+  } finally {
+    client.release();
+  }
+};
+
 module.exports = {
   generateSchedule,
   getJadwalMingguan,
   getLastFormInput,
   getUpcomingSchedule,
+  resolveConflict,
+  toggleTaskVisibility,
+  deleteTask
 };

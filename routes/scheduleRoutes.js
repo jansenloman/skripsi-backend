@@ -6,7 +6,9 @@ const {
   generateSchedule,
   getJadwalMingguan,
   getUpcomingSchedule,
-  getLastFormInput
+  getLastFormInput,
+  toggleTaskVisibility,
+  resolveConflict
 } = require("../controllers/schedule");
 
 const {
@@ -25,6 +27,8 @@ const {
   getJadwalMendatangHistoryDetail,
 } = require("../controllers/jadwalMendatang");
 
+const scheduleController = require("../controllers/schedule");
+
 // Protect all routes
 router.use(authMiddleware);
 
@@ -34,11 +38,26 @@ router.post("/generate-schedule", generateSchedule);
 // Get jadwal mingguan
 router.get("/jadwal-mingguan", getJadwalMingguan);
 
+// Get last form input
+router.get("/last-form-input", getLastFormInput);
+
+// Get upcoming schedule
+router.get("/upcoming", getUpcomingSchedule);
+
+// Resolve schedule conflict
+router.post("/resolve-conflict", resolveConflict);
+
+// Toggle task visibility
+router.put("/task/:taskId/toggle-visibility", toggleTaskVisibility);
+
+// Delete a task
+router.delete('/task/:taskId', authMiddleware, scheduleController.deleteTask);
+
 // Get jadwal kuliah
 router.get("/jadwal-kuliah", getJadwalKuliah);
 router.post("/jadwal-kuliah", addJadwalKuliah);
-router.put("/jadwal-kuliah/:id", editJadwalKuliah);
-router.delete("/jadwal-kuliah/:id", deleteJadwalKuliah);
+router.put("/jadwal-kuliah/:kuliah_id", editJadwalKuliah);
+router.delete("/jadwal-kuliah/:kuliah_id", deleteJadwalKuliah);
 
 // Get jadwal mendatang
 router.get("/jadwal-mendatang", getJadwalMendatang);
@@ -49,11 +68,5 @@ router.delete("/jadwal-mendatang/:id", deleteJadwalMendatang);
 // Get jadwal mendatang history
 router.get("/jadwal-mendatang-history", getJadwalMendatangHistory);
 router.get("/jadwal-mendatang-history/:id", getJadwalMendatangHistoryDetail);
-
-// Get last form input
-router.get("/last-form-input", getLastFormInput);
-
-// Get upcoming schedule
-router.get("/upcoming", getUpcomingSchedule);
 
 module.exports = router;
