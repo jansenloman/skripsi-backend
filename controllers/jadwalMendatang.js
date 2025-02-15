@@ -280,12 +280,11 @@ const getJadwalMendatangHistory = async (req, res) => {
   }
 };
 
-
 module.exports = {
   getJadwalMendatang,
   addJadwalMendatang,
   editJadwalMendatang,
   deleteJadwalMendatang,
   getJadwalMendatangHistory,
-  getJadwalMendatangHistoryDetail,
+  // getJadwalMendatangHistoryDetail,
 };
