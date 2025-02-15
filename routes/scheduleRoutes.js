@@ -24,7 +24,6 @@ const {
   editJadwalMendatang,
   deleteJadwalMendatang,
   getJadwalMendatangHistory,
-  getJadwalMendatangHistoryDetail,
 } = require("../controllers/jadwalMendatang");
 
 const scheduleController = require("../controllers/schedule");
@@ -48,10 +47,10 @@ router.get("/upcoming", getUpcomingSchedule);
 router.post("/resolve-conflict", resolveConflict);
 
 // Toggle task visibility
-router.put("/task/:taskId/toggle-visibility", toggleTaskVisibility);
+// router.put("/task/:taskId/toggle-visibility", toggleTaskVisibility);
 
 // Delete a task
-router.delete('/task/:taskId', authMiddleware, scheduleController.deleteTask);
+// router.delete('/task/:taskId', authMiddleware, scheduleController.deleteTask);
 
 // Get jadwal kuliah
 router.get("/jadwal-kuliah", getJadwalKuliah);
@@ -67,6 +66,5 @@ router.delete("/jadwal-mendatang/:id", deleteJadwalMendatang);
 
 // Get jadwal mendatang history
 router.get("/jadwal-mendatang-history", getJadwalMendatangHistory);
-router.get("/jadwal-mendatang-history/:id", getJadwalMendatangHistoryDetail);
 
 module.exports = router;
