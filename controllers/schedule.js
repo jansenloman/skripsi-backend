@@ -10,6 +10,7 @@ const {
 const {
   getJadwalKuliahData,
   getJadwalMendatangData,
+  filterJadwalMendatangUntukMingguIni,
 } = require("../utils/scheduleHelper");
 
 const {
@@ -72,7 +73,7 @@ const getJadwalMingguan = async (req, res) => {
           type: row.type,
           suggestions: row.suggestions,
           hidden: row.hidden,
-          conflicts_with: row.conflicts_with
+          conflicts_with: row.conflicts_with,
         });
       }
     });
@@ -142,29 +143,31 @@ const cleanJSONResponse = (response) => {
 const detectTimeConflicts = async (client, userId, tasks) => {
   // Helper function to convert time to minutes for comparison
   const toMinutes = (timeStr) => {
-    const [hours, minutes] = timeStr.trim().split(':').map(Number);
+    const [hours, minutes] = timeStr.trim().split(":").map(Number);
     return hours * 60 + minutes;
   };
 
   // Helper function to check if two time ranges overlap
   const isOverlapping = (time1, time2) => {
-    const [start1, end1] = time1.split('-').map(t => toMinutes(t.trim()));
-    const [start2, end2] = time2.split('-').map(t => toMinutes(t.trim()));
+    const [start1, end1] = time1.split("-").map((t) => toMinutes(t.trim()));
+    const [start2, end2] = time2.split("-").map((t) => toMinutes(t.trim()));
 
-    // Check if one range starts during the other range
-    // We consider times exactly at the boundary (e.g., 12:00-13:00 and 13:00-14:00) as non-overlapping
-    return (start1 < end2 && start2 < end1);
+    // Jika salah satu range benar-benar berakhir di waktu mulai range lain, tidak overlap
+    if (end1 === start2 || end2 === start1) return false;
+
+    // Overlap jika ada irisan
+    return start1 < end2 && start2 < end1;
   };
 
   // Group tasks by day for more efficient processing
   const tasksByDay = {};
-  tasks.forEach(task => {
+  tasks.forEach((task) => {
     if (!tasksByDay[task.day]) {
       tasksByDay[task.day] = [];
     }
     tasksByDay[task.day].push({
       ...task,
-      timeRange: task.time.replace(' - ', '-') // Normalize time format
+      timeRange: task.time.replace(" - ", "-"), // Normalize time format
     });
   });
 
@@ -176,7 +179,7 @@ const detectTimeConflicts = async (client, userId, tasks) => {
     // Compare each task with every other task in the same day
     for (let i = 0; i < dayTasks.length; i++) {
       const task1 = dayTasks[i];
-      
+
       for (let j = i + 1; j < dayTasks.length; j++) {
         const task2 = dayTasks[j];
 
@@ -189,7 +192,7 @@ const detectTimeConflicts = async (client, userId, tasks) => {
           if (!conflicts.has(key1)) {
             conflicts.set(key1, {
               task: task1,
-              conflicts: new Set()
+              conflicts: new Set(),
             });
           }
           conflicts.get(key1).conflicts.add(task2);
@@ -198,7 +201,7 @@ const detectTimeConflicts = async (client, userId, tasks) => {
           if (!conflicts.has(key2)) {
             conflicts.set(key2, {
               task: task2,
-              conflicts: new Set()
+              conflicts: new Set(),
             });
           }
           conflicts.get(key2).conflicts.add(task1);
@@ -210,7 +213,7 @@ const detectTimeConflicts = async (client, userId, tasks) => {
   // Convert Map and Sets to arrays for the return value
   return Array.from(conflicts.values()).map(({ task, conflicts }) => ({
     task,
-    conflicts: Array.from(conflicts)
+    conflicts: Array.from(conflicts),
   }));
 };
 
@@ -234,7 +237,9 @@ const generateSchedule = async (req, res) => {
       [req.user.id]
     );
     const jadwalKuliah = await getJadwalKuliahData(req.user.id);
-    const jadwalMendatang = await getJadwalMendatangData(req.user.id);
+    let jadwalMendatang = await getJadwalMendatangData(req.user.id);
+    // Filter jadwal mendatang hanya minggu ini
+    jadwalMendatang = filterJadwalMendatangUntukMingguIni(jadwalMendatang);
 
     // 3. Generate schedule dengan OpenAI
     const promptWithContext = `
@@ -252,35 +257,34 @@ const generateSchedule = async (req, res) => {
       PENGATURAN JADWAL:
       ${formatSettings(settings)}
 
-      JADWAL KULIAH:
+      JADWAL KULIAH (PENTING: JADWAL HARUS DIINPUT):
       ${formatJadwalKuliah(jadwalKuliah)}
-
-      JADWAL MENDATANG:
+  
+      JADWAL MENDATANG (PENTING: JADWAL HARUS DIINPUT):
       ${formatJadwalMendatang(jadwalMendatang)}
 
       ATURAN PENTING:
       1. Buat jadwal LENGKAP dari waktu bangun hingga waktu tidur sesuai pengaturan tanpa adanya waktu yang dilewatkan dari hari Senin sampai Minggu
-      2. Waktu aktivitas harus dalam rentang waktu yang ditentukan di pengaturan
-      3. Durasi setiap aktivitas tidak boleh melebihi ${
+      2. PENTING: JADWAL MENDATANG adalah acara satu kali pada tanggal dan hari yang spesifik. Tempatkan acara ini HANYA pada hari yang sesuai dalam jadwal mingguan yang kamu buat. Jika jadwal ini bentrok dengan jadwal lain, tetap masukkan keduanya.
+      3. Waktu aktivitas harus dalam rentang waktu yang ditentukan di pengaturan
+      4. Default waktu bangun dan tidur jika tidak diisi maka bangun jam 7 dan tidur jam 23 malam. Durasi setiap aktivitas tidak boleh melebihi ${
         settings.rows[0]?.durasi_max || 120
       } menit
-      4. Jika ada tugas yang di mention user, tambahkan sebagai saran di setiap waktu luang sampai hari deadline
-      5. Berikan jeda waktu istirahat ${
+      5. Jika ada tugas yang di mention user, tambahkan sebagai saran di setiap waktu luang sampai hari deadline
+      6. Berikan jeda waktu istirahat ${
         settings.rows[0]?.waktu_istirahat || 15
       } menit antar aktivitas
-      6. Berikan kisaran waktu perjalanan antar tempat yang realistis
-      7. Hindari konflik dengan jadwal kuliah dan jadwal mendatang
-      8. Prioritaskan preferensi tambahan dari pengaturan
-      9. PENTING: Jangan membuat jadwal yang tumpang tindih!
+      7. Berikan kisaran waktu perjalanan antar tempat yang realistis. Prioritaskan preferensi tambahan dari pengaturan
+      8. PENTING: Jika ada jadwal bentrok, tetap digenerate saja jadwalnya ke json walaupun bentrok nanti akan di proses dari backend sistem aplikasi saja.
 
       ATURAN KESEJAHTERAAN PENGGUNA:
-        10. Perhatikan pola aktivitas dan beban mental:
+      9. Perhatikan pola aktivitas dan beban mental:
          - Setelah 2-3 jam aktivitas berat (kuliah/belajar), WAJIB ada istirahat minimal 15-30 menit
          - Setelah aktivitas menguras mental, berikan saran aktivitas refreshing
          - Jangan letakkan terlalu banyak aktivitas berat berturut-turut
          - Sisipkan waktu untuk sosialisasi dan relaksasi
 
-      11. Waktu Luang dan Saran Aktivitas:
+      10. Waktu Luang dan Saran Aktivitas:
           - Untuk waktu luang pendek (< 1 jam): fokus pada aktivitas refreshing atau persiapan
           - Untuk waktu luang medium (1-2 jam): bisa untuk aktivitas produktif ringan atau hobi
           - Untuk waktu luang panjang (> 2 jam): bisa dibagi untuk produktif dan hobi
@@ -290,13 +294,13 @@ const generateSchedule = async (req, res) => {
             * Kebutuhan sosialisasi
             * Hobi dan preferensi pengguna
 
-      12. Fleksibilitas dan Keseimbangan:
+      11. Fleksibilitas dan Keseimbangan:
           - Berikan minimal 2-3 opsi saran untuk setiap waktu luang
           - Sertakan kombinasi aktivitas produktif dan refreshing
           - Untuk waktu malam, prioritaskan aktivitas yang menenangkan
           - Jika ada jadwal padat di siang hari, berikan waktu istirahat yang cukup di malam hari
 
-      13. Format Waktu dan Transisi:
+      12. Format Waktu dan Transisi:
       PENTING: untuk setiap aktivitas
           - Contoh format jadwal:
             * "Kuliah Pagi (09:00 - 12:00)" [fixed]
@@ -304,8 +308,13 @@ const generateSchedule = async (req, res) => {
             * "Waktu Luang (13:00 - 14:00)" [free] - Saran: 1) Review materi kuliah, 2) Istirahat sejenak, 3) Persiapan kuliah siang
             * "Perjalanan ke Kampus (14:00 - 14:30)" [basic]
             * "Kuliah Siang (14:30 - 17:00)" [fixed]
+          - Contoh jika ada bentrok:
+            * "Kuliah Pagi (09:00 - 12:00)" [fixed]
+            * "Istirahat & Makan Siang (12:00 - 13:30)" [basic]
+            jadi walau bentrok tetap di buatkan saja sesuai contoh di atas
+            
       
-      14. Akhiri hari dengan waktu Tidur dan Waktu Bangun yang sudah diatur di pengaturan
+      13. Akhiri hari dengan waktu Tidur dan Waktu Bangun yang sudah diatur di pengaturan
 
       PENTING: Berikan respons HANYA dalam format JSON berikut:
       {
@@ -316,7 +325,7 @@ const generateSchedule = async (req, res) => {
               {
                 "task": "string (deskripsi aktivitas)",
                 "time": "HH:mm - HH:mm (format 24 jam)",
-                "type": "fixed|basic|free|background",
+                "type": "fixed|basic|free",
                 "suggestions": "string (wajib diisi untuk type free, berikan 2-3 opsi yang relevan)"
               }
             ]
@@ -324,11 +333,12 @@ const generateSchedule = async (req, res) => {
         ]
       }
 
+      14. Untuk perjalanan atau suatu proses background tidak perlu dibuat.
+
       Aturan type:
       - 'fixed': kegiatan yang tidak bisa diubah (kuliah, meeting)
       - 'basic': kegiatan rutin (makan, tidur)
       - 'free': kegiatan fleksibel (belajar, tugas)
-      - 'background': kegiatan latar belakang yang tidak terlalu signifikan
     `;
 
     const completion = await openai.chat.completions.create({
@@ -341,8 +351,7 @@ const generateSchedule = async (req, res) => {
             "Untuk setiap task, tentukan type sebagai: " +
             "- 'fixed' untuk kegiatan yang tidak bisa diubah (kuliah, meeting) " +
             "- 'basic' untuk kegiatan rutin (makan, tidur) " +
-            "- 'free' untuk kegiatan fleksibel (belajar, tugas) " +
-            "- 'background' untuk kegiatan latar belakang yang tidak terlalu signifikan",
+            "- 'free' untuk kegiatan fleksibel (belajar, tugas) ",
         },
         {
           role: "user",
@@ -356,38 +365,51 @@ const generateSchedule = async (req, res) => {
 
     const rawResponse = completion.choices[0].message.content;
     const generatedSchedule = cleanJSONResponse(rawResponse);
-    console.log("Generated Schedule:", generatedSchedule.schedule);
+    // console.log(
+    //   "Generated Schedule:",
+    //   JSON.stringify(generatedSchedule.schedule, null, 2)
+    // );
+    // console.log(
+    //   "jadwal mendatang checker:",
+    //   formatJadwalMendatang(jadwalMendatang)
+    // );
 
     // Check for conflicts
-    const allTasks = generatedSchedule.schedule.flatMap(day => 
-      day.daily.map(task => ({
-        ...task,
-        day: day.day
-      }))
-    );
-    
+    const allTasks = [
+      ...generatedSchedule.schedule.flatMap((day) =>
+        day.daily.map((task) => ({
+          ...task,
+          day: day.day,
+        }))
+      ),
+    ];
+
+    // console.log("All tasks before conflict check:", allTasks);
     const conflicts = await detectTimeConflicts(client, req.user.id, allTasks);
-    
+    // console.log("Detected conflicts:", conflicts);
+
     // Create a copy of schedule for display with conflict marks
     const displaySchedule = {
-      schedule: generatedSchedule.schedule.map(day => ({
+      schedule: generatedSchedule.schedule.map((day) => ({
         ...day,
-        daily: day.daily.map(task => {
-          const conflict = conflicts.find(c => 
-            c.task.task === task.task && 
-            c.task.time === task.time
+        daily: day.daily.map((task) => {
+          // Log to check if the conflict matching is working
+          // console.log("Checking task:", task);
+          const conflict = conflicts.find(
+            (c) => c.task.task === task.task && c.task.time === task.time
           );
-          
+          // console.log("Detected conflict:", conflict);
+
           if (conflict) {
             return {
               ...task,
-              type: 'conflict',
-              conflictingTasks: conflict.conflicts
+              type: "conflict",
+              conflictingTasks: conflict.conflicts,
             };
           }
           return task;
-        })
-      }))
+        }),
+      })),
     };
 
     // 4. Simpan ke generated_schedules dengan schedule yang sudah ditandai konflik
@@ -419,11 +441,10 @@ const generateSchedule = async (req, res) => {
       // Simpan tasks dengan type dan suggestions
       for (const task of day.daily) {
         const [jamMulai, jamSelesai] = task.time.split(" - ");
-        
+
         // Check if this task has conflicts
-        const conflict = conflicts.find(c => 
-          c.task.task === task.task && 
-          c.task.time === task.time
+        const conflict = conflicts.find(
+          (c) => c.task.task === task.task && c.task.time === task.time
         );
         // console.log(conflict);
 
@@ -443,10 +464,10 @@ const generateSchedule = async (req, res) => {
             task.task,
             jamMulai,
             jamSelesai,
-            conflict ? 'conflict' : (task.type || "basic"),
+            conflict ? "conflict" : task.type || "basic",
             task.suggestions || null,
-            conflict ? conflict.conflicts.map(t => t.task_id) : null,
-            false // Initially not hidden
+            conflict ? conflict.conflicts.map((t) => t.task_id) : null,
+            false, // Initially not hidden
           ]
         );
       }
@@ -456,7 +477,7 @@ const generateSchedule = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      schedule: displaySchedule.schedule // Return the display version with conflict marks
+      schedule: displaySchedule.schedule, // Return the display version with conflict marks
     });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -593,8 +614,8 @@ const getUpcomingSchedule = async (req, res) => {
 const resolveConflict = async (req, res) => {
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    
+    await client.query("BEGIN");
+
     const { taskId } = req.body;
 
     // Get the selected task and its conflicts
@@ -607,14 +628,14 @@ const resolveConflict = async (req, res) => {
     );
 
     if (taskResult.rows.length === 0) {
-      throw new Error('Task not found');
+      throw new Error("Task not found");
     }
 
     const task = taskResult.rows[0];
 
     // Check if user owns this task
     if (task.user_id !== req.user.id) {
-      throw new Error('Unauthorized');
+      throw new Error("Unauthorized");
     }
 
     // Delete conflicting tasks
@@ -635,18 +656,18 @@ const resolveConflict = async (req, res) => {
       [taskId]
     );
 
-    await client.query('COMMIT');
+    await client.query("COMMIT");
 
     res.status(200).json({
       success: true,
-      message: 'Conflict resolved successfully'
+      message: "Conflict resolved successfully",
     });
   } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Error in resolveConflict:', error);
+    await client.query("ROLLBACK");
+    console.error("Error in resolveConflict:", error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message,
     });
   } finally {
     client.release();
@@ -657,8 +678,8 @@ const resolveConflict = async (req, res) => {
 const toggleTaskVisibility = async (req, res) => {
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    
+    await client.query("BEGIN");
+
     const { taskId } = req.params;
     const { hidden } = req.body;
 
@@ -675,11 +696,15 @@ const toggleTaskVisibility = async (req, res) => {
     );
 
     if (result.rowCount === 0) {
-      throw new Error('Task not found or unauthorized');
+      throw new Error("Task not found or unauthorized");
     }
 
     // If we're showing this task, hide its conflicting tasks
-    if (!hidden && result.rows[0].conflicts_with && result.rows[0].conflicts_with.length > 0) {
+    if (
+      !hidden &&
+      result.rows[0].conflicts_with &&
+      result.rows[0].conflicts_with.length > 0
+    ) {
       await client.query(
         `UPDATE task t 
          SET hidden = true 
@@ -691,18 +716,18 @@ const toggleTaskVisibility = async (req, res) => {
       );
     }
 
-    await client.query('COMMIT');
+    await client.query("COMMIT");
 
     res.status(200).json({
       success: true,
-      message: 'Task visibility updated successfully'
+      message: "Task visibility updated successfully",
     });
   } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Error in toggleTaskVisibility:', error);
+    await client.query("ROLLBACK");
+    console.error("Error in toggleTaskVisibility:", error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   } finally {
     client.release();
@@ -717,36 +742,55 @@ const deleteTask = async (req, res) => {
 
     // First check if task exists
     const taskCheck = await client.query(
-      'SELECT * FROM task WHERE task_id = $1',
+      "SELECT * FROM task WHERE task_id = $1",
       [taskId]
     );
 
     if (taskCheck.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        error: 'Task tidak ditemukan'
+        error: "Task tidak ditemukan",
       });
     }
 
     // Delete task
-    await client.query(
-      'DELETE FROM task WHERE task_id = $1',
-      [taskId]
-    );
+    await client.query("DELETE FROM task WHERE task_id = $1", [taskId]);
 
     res.json({
       success: true,
-      message: 'Task berhasil dihapus'
+      message: "Task berhasil dihapus",
     });
-
   } catch (error) {
-    console.error('Error deleting task:', error);
+    console.error("Error deleting task:", error);
     res.status(500).json({
       success: false,
-      error: 'Terjadi kesalahan saat menghapus task'
+      error: "Terjadi kesalahan saat menghapus task",
     });
   } finally {
     client.release();
+  }
+};
+
+// Test route to get formatted jadwal kuliah and jadwal mendatang (minggu ini)
+const testOnly = async (req, res) => {
+  try {
+    const jadwalKuliah = await getJadwalKuliahData(req.user.id);
+    let jadwalMendatang = await getJadwalMendatangData(req.user.id);
+    jadwalMendatang = filterJadwalMendatangUntukMingguIni(jadwalMendatang);
+
+    const formattedKuliah = formatJadwalKuliah(jadwalKuliah);
+    const formattedMendatang = formatJadwalMendatang(jadwalMendatang);
+
+    res.status(200).json({
+      success: true,
+      jadwal_kuliah: formattedKuliah,
+      jadwal_mendatang: formattedMendatang,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
 };
 
@@ -757,5 +801,6 @@ module.exports = {
   getUpcomingSchedule,
   resolveConflict,
   toggleTaskVisibility,
-  deleteTask
+  deleteTask,
+  testOnly,
 };

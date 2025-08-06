@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const authMiddleware = require("../middleware/auth");
+const multer = require("multer");
+const upload = multer({ dest: "uploads/" });
 
 const {
   generateSchedule,
@@ -16,6 +18,8 @@ const {
   addJadwalKuliah,
   editJadwalKuliah,
   deleteJadwalKuliah,
+  uploadJadwalKuliah,
+  confirmUploadJadwalKuliah
 } = require("../controllers/jadwalKuliah");
 
 const {
@@ -57,6 +61,9 @@ router.get("/jadwal-kuliah", getJadwalKuliah);
 router.post("/jadwal-kuliah", addJadwalKuliah);
 router.put("/jadwal-kuliah/:kuliah_id", editJadwalKuliah);
 router.delete("/jadwal-kuliah/:kuliah_id", deleteJadwalKuliah);
+// Upload jadwal kuliah
+router.post("/jadwal-kuliah/upload", upload.single("file"), uploadJadwalKuliah);
+router.post("/jadwal-kuliah/upload/confirm", confirmUploadJadwalKuliah);
 
 // Get jadwal mendatang
 router.get("/jadwal-mendatang", getJadwalMendatang);

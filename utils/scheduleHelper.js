@@ -91,12 +91,41 @@ const formatJadwalMendatang = (jadwalMendatang) => {
   return jadwalMendatang
     .map(
       (jm) =>
-        `- ${formatDate(jm.tanggal)}: ${jm.kegiatan} (${formatTime(
+        `- ${formatDate(jm.tanggal)} (${getDayName(jm.tanggal)}): ${jm.kegiatan} (${formatTime(
           jm.jam_mulai
         )} - ${formatTime(jm.jam_selesai)})`
     )
     .join("\n");
 };
+
+function getDayName(dateString) {
+  const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+  const date = new Date(dateString);
+  return days[date.getDay()];
+}
+
+/**
+ * Filter jadwal mendatang hanya untuk minggu berjalan (mulai hari ini sampai Minggu)
+ * @param {Array} jadwalMendatang - array jadwal mendatang
+ * @returns {Array} - array jadwal mendatang yang hanya di minggu ini
+ */
+function filterJadwalMendatangUntukMingguIni(jadwalMendatang) {
+  const now = new Date();
+  // Hari dalam JS: 0 = Minggu, 1 = Senin, ..., 6 = Sabtu
+  const hariIni = now.getDay();
+  // Hitung sisa hari ke Minggu (0 = Minggu)
+  const hariKeMinggu = 7 - hariIni;
+  // Tanggal akhir minggu (Minggu)
+  const akhirMinggu = new Date(now);
+  akhirMinggu.setDate(now.getDate() + hariKeMinggu);
+  akhirMinggu.setHours(23,59,59,999);
+
+  return jadwalMendatang.filter(jm => {
+    const tgl = new Date(jm.tanggal);
+    // Hanya ambil jadwal mulai hari ini (>= now) sampai Minggu (<= akhirMinggu)
+    return tgl >= new Date(now.getFullYear(), now.getMonth(), now.getDate()) && tgl <= akhirMinggu;
+  });
+}
 
 module.exports = {
   getJadwalKuliahData,
@@ -105,4 +134,5 @@ module.exports = {
   formatProfileData,
   formatJadwalKuliah,
   formatJadwalMendatang,
+  filterJadwalMendatangUntukMingguIni,
 };

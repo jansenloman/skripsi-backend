@@ -1,4 +1,7 @@
 const pool = require("../config/database");
+const pdfParse = require("pdf-parse");
+const Tesseract = require("tesseract.js");
+const fs = require("fs");
 
 // Get jadwal kuliah
 const getJadwalKuliah = async (req, res) => {
@@ -159,9 +162,91 @@ const deleteJadwalKuliah = async (req, res) => {
   }
 };
 
+const hariList = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"];
+
+// Upload dan parsing file jadwal kuliah
+const uploadJadwalKuliah = async (req, res) => {
+  try {
+    const file = req.file;
+    let jadwal = [];
+    if (!file) return res.status(400).json({ success: false, error: "No file uploaded" });
+
+    let text = "";
+    if (file.mimetype === "application/pdf") {
+      // PDF parsing
+      const dataBuffer = fs.readFileSync(file.path);
+      const pdfData = await pdfParse(dataBuffer);
+      text = pdfData.text;
+    } else if (file.mimetype.startsWith("image/")) {
+      // OCR parsing
+      const ocrResult = await Tesseract.recognize(file.path, "ind+eng");
+      text = ocrResult.data.text;
+    } else {
+      fs.unlinkSync(file.path);
+      return res.status(400).json({ success: false, error: "File type not supported" });
+    }
+    fs.unlinkSync(file.path); // hapus file upload setelah parsing
+
+    // Parsing text ke array jadwal
+    // Asumsi: Setiap baris = Hari, Mata Kuliah, Jam Mulai, Jam Selesai (dipisah tab/koma/spasi)
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    for (const line of lines) {
+      // Cek apakah baris mengandung nama hari
+      const hari = hariList.find(h => line.toLowerCase().includes(h.toLowerCase()));
+      if (hari) {
+        // Ekstrak jam dan mata kuliah
+        // Contoh baris: Senin Matematika 08:00 09:40
+        // atau: Senin, Matematika, 08:00, 09:40
+        const parts = line.split(/[\s,;|\t]+/).filter(Boolean);
+        // Cari index hari
+        const idxHari = parts.findIndex(p => p.toLowerCase() === hari.toLowerCase());
+        // Cari jam (format HH:mm)
+        const jamRegex = /([01]?[0-9]|2[0-3]):[0-5][0-9]/g;
+        const jamMatches = line.match(jamRegex);
+        if (jamMatches && jamMatches.length >= 2) {
+          // Mata kuliah = gabungan setelah hari sampai sebelum jam
+          let mataKuliah = parts.slice(idxHari + 1, parts.length - 2).join(" ");
+          if (!mataKuliah) mataKuliah = "-";
+          jadwal.push({
+            hari,
+            mata_kuliah: mataKuliah,
+            jam_mulai: jamMatches[0],
+            jam_selesai: jamMatches[1],
+          });
+        }
+      }
+    }
+    if (jadwal.length === 0) {
+      return res.status(400).json({ success: false, error: "Tidak ditemukan data jadwal valid di file." });
+    }
+    res.json({ success: true, data: jadwal });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// Simpan hasil parsing ke database
+const confirmUploadJadwalKuliah = async (req, res) => {
+  try {
+    const { jadwal } = req.body;
+    if (!Array.isArray(jadwal)) return res.status(400).json({ success: false, error: "Invalid data" });
+    for (const item of jadwal) {
+      await pool.query(
+        "INSERT INTO jadwal_kuliah (user_id, hari, jam_mulai, jam_selesai, mata_kuliah) VALUES ($1, $2, $3, $4, $5)",
+        [req.user.id, item.hari, item.jam_mulai, item.jam_selesai, item.mata_kuliah]
+      );
+    }
+    res.json({ success: true, message: "Jadwal berhasil disimpan" });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 module.exports = {
   getJadwalKuliah,
   addJadwalKuliah,
   editJadwalKuliah,
   deleteJadwalKuliah,
+  uploadJadwalKuliah,
+  confirmUploadJadwalKuliah,
 };

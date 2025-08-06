@@ -40,8 +40,8 @@ const getScheduleSettings = async (req, res) => {
 
 const updateScheduleSettings = async (req, res) => {
   try {
-    console.log("User ID:", req.user.id);
-    console.log("Request body:", req.body);
+    // console.log("User ID:", req.user.id);
+    // console.log("Request body:", req.body);
 
     const {
       wake_time,
@@ -65,19 +65,28 @@ const updateScheduleSettings = async (req, res) => {
       }
     };
 
-    validateTimeAndDuration(breakfast_time, breakfast_duration, "Breakfast");
-    validateTimeAndDuration(lunch_time, lunch_duration, "Lunch");
-    validateTimeAndDuration(dinner_time, dinner_duration, "Dinner");
-    validateTimeAndDuration(rest_time, rest_duration, "Rest");
+    // Jika semua nilai null (reset), skip validasi
+    const allNull = [
+      wake_time, sleep_time, breakfast_time, breakfast_duration,
+      lunch_time, lunch_duration, dinner_time, dinner_duration,
+      rest_time, rest_duration, productive_time_start, productive_time_end
+    ].every(value => value === null || value === undefined || value === "" || value === 0);
 
-    // Validasi waktu produktif
-    if (
-      (productive_time_start && !productive_time_end) ||
-      (!productive_time_start && productive_time_end)
-    ) {
-      throw new Error(
-        "Waktu produktif harus diisi keduanya atau tidak sama sekali"
-      );
+    if (!allNull) {
+      validateTimeAndDuration(breakfast_time, breakfast_duration, "Breakfast");
+      validateTimeAndDuration(lunch_time, lunch_duration, "Lunch");
+      validateTimeAndDuration(dinner_time, dinner_duration, "Dinner");
+      validateTimeAndDuration(rest_time, rest_duration, "Rest");
+      
+      // Validasi waktu produktif hanya jika tidak reset
+      if (
+        (productive_time_start && !productive_time_end) ||
+        (!productive_time_start && productive_time_end)
+      ) {
+        throw new Error(
+          "Waktu produktif harus diisi keduanya atau tidak sama sekali"
+        );
+      }
     }
 
     const result = await pool.query(
